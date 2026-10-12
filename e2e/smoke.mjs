@@ -94,6 +94,18 @@ await p.getByRole("button", { name: "Upload", exact: true }).click();
 await p.getByText(/not a supported file/).waitFor({ timeout: 15000 });
 ok(true, "file pretending to be a PDF is rejected");
 
+// Receipt scanning (Tesseract.js in the browser; loads its model from a CDN on first use)
+if (process.env.SMOKE_OCR !== "0") {
+  await p.goto(BASE + "/expenses/new", { waitUntil: "networkidle" });
+  await p.getByText("Staff Training Logistics").click();
+  await p.getByRole("button", { name: /Continue/ }).click();
+  await p.locator('input[accept="image/jpeg,image/png,image/webp"]').setInputFiles(new URL("./sample-receipt.png", import.meta.url).pathname);
+  await p.getByText(/We read this from your receipt|couldn't read|isn't available/).waitFor({ timeout: 120000 });
+  ok((await p.inputValue("#amount")) === "45500" && (await p.inputValue("#expenseDate")) === "2026-10-08", "receipt scan filled in total ₦45,500 and date 8 Oct 2026");
+  ok((await p.inputValue("#paymentReference")) === "INV-29871" && /office supplies/i.test(await p.inputValue("#vendor")), "receipt scan filled in vendor and receipt number");
+}
+
+
 // Staff cannot access finance pages or other people's data
 const r = await staff.page.goto(BASE + "/allocations");
 ok(staff.page.url().includes("/dashboard?denied=1"), "staff redirected away from finance-only page");

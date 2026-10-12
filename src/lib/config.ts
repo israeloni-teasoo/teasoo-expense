@@ -1,6 +1,10 @@
 /** Environment-driven configuration. Everything optional degrades gracefully in development. */
 export const config = {
-  appUrl: (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, ""),
+  // On Vercel, default to the project's production domain so Google redirects and email links work.
+  appUrl: (
+    process.env.APP_URL ||
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000")
+  ).replace(/\/$/, ""),
   /** Company Google Workspace domain. People with this email domain sign in with Google. */
   companyDomain: (process.env.COMPANY_EMAIL_DOMAIN ?? "teasooconsulting.com").toLowerCase(),
   /** Comma-separated emails that become administrators on their first Google sign-in. */

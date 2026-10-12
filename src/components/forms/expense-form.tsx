@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, Check, ChevronLeft, ChevronRight, FileText, ImageIcon, Paperclip, Sparkles, Upload, X } from "lucide-react";
+import { Camera, Check, ChevronLeft, ChevronRight, FileText, ImageIcon, Loader2, Paperclip, ScanLine, Sparkles, Undo2, Upload, X } from "lucide-react";
 import { ActionForm, FormField, SubmitButton, useFormState } from "@/components/ui/action-form";
 import { Button } from "@/components/ui/button";
 import { Input, MoneyInput, Select, Textarea } from "@/components/ui/form";
@@ -9,6 +9,9 @@ import { cn } from "@/lib/cn";
 import { formatBytes, PAYMENT_METHODS } from "@/lib/format";
 import { formatMoney, koboToInput, parseMoney } from "@/lib/money";
 import { suggestCategory } from "@/lib/suggest";
+import { canScan, readReceipt } from "@/lib/ocr";
+import { parseReceiptText, type ReceiptFields } from "@/lib/receipt-parser";
+import { formatDate } from "@/lib/dates";
 import { saveExpenseAction } from "@/app/actions/expenses";
 
 export type FundOption = {
@@ -117,8 +120,12 @@ function Steps({
   const [projectId, setProjectId] = useState(initial.projectId ?? "");
   const [receipts, setReceipts] = useState<File[]>([]);
   const [supporting, setSupporting] = useState<File[]>([]);
+  const [paymentRef, setPaymentRef] = useState(initial.paymentReference ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [scan, setScan] = useState<ScanState>({ status: "idle" });
   const receiptInput = useRef<HTMLInputElement>(null);
+  const scanCameraInput = useRef<HTMLInputElement>(null);
+  const scanPhotoInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
   const supportingInput = useRef<HTMLInputElement>(null);
 
@@ -166,6 +173,40 @@ function Steps({
     }
     if (kind === "receipts") setReceipts((r) => [...r, ...accepted]);
     else setSupporting((r) => [...r, ...accepted]);
+  }
+
+  /** Read a receipt photo in the browser and fill in what we can; the user checks before submitting. */
+  async function scanReceipt(file: File) {
+    if (!canScan(file)) {
+      setScan({ status: "error", message: "Scanning works with photos (JPG, PNG or WebP). PDFs can still be attached as evidence." });
+      return;
+    }
+    setReceipts((r) => (r.includes(file) ? r : [...r, file]));
+    setScan({ status: "reading", progress: 0, fileName: file.name });
+    try {
+      const text = await readReceipt(file, (progress) => setScan({ status: "reading", progress, fileName: file.name }));
+      const fields = parseReceiptText(text, today);
+      const previous = { amountText, expenseDate, vendor, paymentRef };
+      if (fields.amount) setAmountText(koboToInput(fields.amount));
+      if (fields.date) setExpenseDate(fields.date);
+      if (fields.vendor) setVendor(fields.vendor);
+      if (fields.receiptNumber) setPaymentRef(fields.receiptNumber);
+      if (fields.vendor && !description.trim()) setDescription(fields.vendor);
+      const found = [fields.amount, fields.date, fields.vendor, fields.receiptNumber].filter(Boolean).length;
+      setScan(found ? { status: "done", fields, previous, fileName: file.name } : { status: "error", message: "We couldn't read this receipt clearly. Fill in the details yourself — the photo is still attached." });
+    } catch (e) {
+      console.error(e);
+      setScan({ status: "error", message: "Receipt scanning isn't available right now (it needs an internet connection the first time). Fill in the details yourself — the photo is still attached." });
+    }
+  }
+
+  function undoScan() {
+    if (scan.status !== "done") return;
+    setAmountText(scan.previous.amountText);
+    setExpenseDate(scan.previous.expenseDate);
+    setVendor(scan.previous.vendor);
+    setPaymentRef(scan.previous.paymentRef);
+    setScan({ status: "idle" });
   }
 
   function next() {
@@ -271,6 +312,17 @@ function Steps({
           <h2 className="text-lg font-semibold text-gray-900">What did you spend on?</h2>
           {fund && <p className="mt-1 text-sm text-gray-500">From {fund.purpose} · {fund.kind === "REIMBURSEMENT" ? "personal spend" : `${formatMoney(availableBefore)} available`}</p>}
         </div>
+        <input ref={scanCameraInput} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1}
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) scanReceipt(f); }} />
+        <input ref={scanPhotoInput} type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" tabIndex={-1}
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) scanReceipt(f); }} />
+        <ScanPanel
+          scan={scan}
+          onCamera={() => scanCameraInput.current?.click()}
+          onPhoto={() => scanPhotoInput.current?.click()}
+          onUndo={undoScan}
+          onDismiss={() => setScan({ status: "idle" })}
+        />
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField name="amount" label="Amount" required>
             <MoneyInput id="amount" name="amount" value={amountText} onChange={(e) => setAmountText(e.target.value)} />
@@ -326,7 +378,7 @@ function Steps({
             </Select>
           </FormField>
         </div>
-        <details className="group rounded-xl border border-gray-200 bg-white" open={!!(initial.paymentReference || initial.notes || initial.projectId)}>
+        <details className="group rounded-xl border border-gray-200 bg-white" open={!!(paymentRef || initial.notes || initial.projectId)}>
           <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-gray-700">
             <span className="inline-flex items-center gap-1">
               <ChevronRight className="h-4 w-4 transition group-open:rotate-90" /> More details (optional)
@@ -344,7 +396,7 @@ function Steps({
               </Select>
             </FormField>
             <FormField name="paymentReference" label="Payment / receipt reference">
-              <Input id="paymentReference" name="paymentReference" defaultValue={initial.paymentReference ?? ""} />
+              <Input id="paymentReference" name="paymentReference" value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} />
             </FormField>
             <FormField name="notes" label="Notes">
               <Textarea id="notes" name="notes" defaultValue={initial.notes ?? ""} />
@@ -393,6 +445,22 @@ function Steps({
           </button>
         </div>
 
+        {scan.status === "idle" && receipts.some(canScan) && (
+          <button
+            type="button"
+            onClick={async () => {
+              setStep(1);
+              await scanReceipt(receipts.find(canScan)!);
+            }}
+            className="flex w-full items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-left text-sm text-brand-900 hover:bg-brand-100"
+          >
+            <ScanLine className="h-5 w-5 shrink-0 text-brand-700" />
+            <span>
+              <span className="block font-medium">Fill in the details from this receipt</span>
+              <span className="block text-xs text-brand-800/80">Reads the vendor, date, total and receipt number — you check them before submitting.</span>
+            </span>
+          </button>
+        )}
         <FileList
           title="Receipts"
           files={receipts}
@@ -475,6 +543,96 @@ function Steps({
               </SubmitButton>
             </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ScanState =
+  | { status: "idle" }
+  | { status: "reading"; progress: number; fileName: string }
+  | { status: "done"; fields: ReceiptFields; previous: { amountText: string; expenseDate: string; vendor: string; paymentRef: string }; fileName: string }
+  | { status: "error"; message: string };
+
+function ScanPanel({
+  scan,
+  onCamera,
+  onPhoto,
+  onUndo,
+  onDismiss,
+}: {
+  scan: ScanState;
+  onCamera: () => void;
+  onPhoto: () => void;
+  onUndo: () => void;
+  onDismiss: () => void;
+}) {
+  if (scan.status === "reading") {
+    return (
+      <div className="rounded-xl border border-brand-200 bg-brand-50 p-4" aria-live="polite">
+        <p className="flex items-center gap-2 text-sm font-medium text-brand-900">
+          <Loader2 className="h-4 w-4 animate-spin" /> Reading receipt…
+        </p>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-brand-100">
+          <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${Math.max(5, Math.round(scan.progress * 100))}%` }} />
+        </div>
+        <p className="mt-2 text-xs text-brand-800/80">This happens on your device. The first scan takes a little longer while the reader loads.</p>
+      </div>
+    );
+  }
+  if (scan.status === "done") {
+    const f = scan.fields;
+    const items = [
+      f.vendor && ["Vendor", f.vendor],
+      f.date && ["Date", formatDate(f.date)],
+      f.amount && ["Total", formatMoney(f.amount)],
+      f.receiptNumber && ["Receipt no.", f.receiptNumber],
+      f.tax && ["VAT / tax", formatMoney(f.tax)],
+    ].filter(Boolean) as [string, string][];
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4" aria-live="polite">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-sm font-medium text-emerald-900">We read this from your receipt — please check it</p>
+          <button type="button" onClick={onDismiss} className="rounded p-0.5 text-emerald-700 hover:bg-emerald-100" aria-label="Dismiss">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
+          {items.map(([k, v]) => (
+            <div key={k} className="min-w-0">
+              <dt className="text-xs text-emerald-800/80">{k}</dt>
+              <dd className="truncate font-medium text-emerald-950">{v}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-emerald-900">
+          <span>The fields below have been filled in. The photo is attached as your receipt.</span>
+          <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 font-medium underline">
+            <Undo2 className="h-3.5 w-3.5" /> Undo
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-dashed border-gray-300 bg-white p-4">
+      {scan.status === "error" && <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">{scan.message}</p>}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <ScanLine className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
+          <div>
+            <p className="text-sm font-medium text-gray-900">Have the receipt? Scan it to fill this in</p>
+            <p className="text-xs text-gray-500">Reads the vendor, date, total and receipt number. Free, and the photo stays on your device for scanning.</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button type="button" size="sm" onClick={onCamera}>
+            <Camera className="h-4 w-4" /> Scan
+          </Button>
+          <Button type="button" size="sm" variant="secondary" onClick={onPhoto}>
+            <ImageIcon className="h-4 w-4" /> Photo
+          </Button>
         </div>
       </div>
     </div>

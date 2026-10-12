@@ -8,11 +8,11 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { jsPDF } from "jspdf";
 import { Pool } from "pg";
-import { poolConfig } from "./pool-config";
+import { directDatabaseUrl, poolConfig } from "./pool-config";
 import { DEFAULT_CATEGORIES, DEFAULT_DEPARTMENTS } from "./defaults";
 import * as s from "./schema";
 
-const pool = new Pool(poolConfig(process.env.DIRECT_URL || process.env.DATABASE_URL, 2));
+const pool = new Pool(poolConfig(directDatabaseUrl(), 2));
 const db = drizzle(pool, { schema: s });
 
 const N = (naira: number) => Math.round(naira * 100);

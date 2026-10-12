@@ -93,10 +93,15 @@ class SupabaseDriver implements StorageDriver {
   }
 }
 
+/** Supabase when its keys are present (e.g. via the Vercel integration), local folder otherwise. */
+export function storageDriverName() {
+  return process.env.STORAGE_DRIVER || (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? "supabase" : "local");
+}
+
 let driver: StorageDriver | null = null;
 export function storage(): StorageDriver {
   if (driver) return driver;
-  const kind = process.env.STORAGE_DRIVER ?? "local";
+  const kind = storageDriverName();
   if (kind === "supabase") {
     const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;

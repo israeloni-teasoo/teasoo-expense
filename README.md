@@ -16,6 +16,7 @@ Responsive throughout: a sidebar layout on desktop, and on phones a bottom tab b
 | **Accountant** | Analytical dashboard (disbursed, expenses, pending, outstanding, overdue, rejected, missing receipts, ready to reconcile), charts, smart insights, review queue with bulk approve, approve / reject / ask a question, allocations, staff directory, record returns, reconciliation board, claims review, documents library, reports, exports |
 | **Admin** | Everything above plus users & roles, categories (with receipt rules and suggestion keywords), departments, projects with budgets, validation rules, final claim approval, corrections, audit log |
 | **Management** | Read-only dashboard, allocations, expenses, staff, documents, reports and exports |
+| **Receipt scanning** | Snap or pick a receipt photo on the Add Expense details step: Tesseract.js reads it **in the browser** (free, no API key, the photo isn't sent anywhere for scanning) and fills in vendor, date, total and receipt number for the staff member to check. Undo restores what was there. PDFs can still be attached but aren't scanned |
 | **Smart validation** | Insufficient balance (flag or block, configurable), possible duplicates (confirm to continue), future dates, required receipts, file type sniffing and size limits; category suggestions from the description; unusual-expense detection |
 | **Reconciliation** | Unspent money is never assumed returned: returns are recorded with method, reference and evidence. Allocations can only be reconciled once every expense is resolved, claims are decided and the final balance is ₦0 |
 | **Over-spending** | Over-budget expenses are flagged; staff log a claim with evidence of approval → accountant recommends → admin approves → the funds are added to the allocation as an adjustment |
@@ -81,7 +82,9 @@ Demo accounts (password `Password123`):
 2. **Receipts bucket** — with those values in a local `.env`, run `npm run storage:setup` once to create the private `receipts` bucket (or create it in the dashboard with *Public* turned off).
 3. **Google** — in Google Cloud Console create an OAuth client ID (*Web application*). Authorised redirect URI: `https://<your-domain>/api/auth/google/callback` (add `http://localhost:3000/api/auth/google/callback` for development). Set the consent screen to *Internal* so only Workspace accounts can use it.
 4. **Resend** — add and verify `teasooconsulting.com` under **Domains** (DNS records), then create an API key.
-5. **Vercel** — import the repository and set the environment variables from `.env.example`, including `STORAGE_DRIVER=supabase`, `APP_URL=https://<your-domain>` and `BOOTSTRAP_ADMIN_EMAILS=<your email>`. The `vercel-build` script runs database migrations before `next build`.
+5. **Vercel** — import the repository and set the environment variables from `.env.example`, including `BOOTSTRAP_ADMIN_EMAILS=<your email>`. Tick **Production and Preview** for every variable — branch deployments are *Preview* builds and don't see Production-only variables. The `vercel-build` script checks the environment (`npm run check-env` prints exactly what's missing), runs database migrations, then `next build`.
+
+   If you connected Supabase through the **Vercel Marketplace integration**, its variables are picked up automatically: `POSTGRES_URL` is used as the app connection, `POSTGRES_URL_NON_POOLING` for migrations, and `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` switch receipt storage to Supabase. You then only need to add `AUTH_SECRET`, the Google and Resend keys and `BOOTSTRAP_ADMIN_EMAILS`. `APP_URL` defaults to the project's production domain.
 6. Sign in with Google using the bootstrap admin email. The organisation, default departments and categories are created automatically on that first sign-in. Don't run `db:seed` against production — it's demo data.
 
 Session cookies are `Secure` in production, so serve over HTTPS (Vercel does). The demo-account hint on the login page is hidden in production unless `SHOW_DEMO_ACCOUNTS=1`.
@@ -91,11 +94,12 @@ Without `RESEND_API_KEY`, emails are written to the server log instead of being 
 ## Testing
 
 ```bash
-npm test              # unit tests: money parsing, balance maths, reporting periods, category suggestions
+npm test              # unit tests: money, balances, periods, category suggestions, receipt parsing, Google claims
 npm run typecheck
 npm run lint
 npm run test:smoke    # end-to-end workflow against a running app with fresh seed data (needs Playwright)
 npm run storage:setup # create the private Supabase receipts bucket (once)
+npm run check-env     # list missing / optional environment settings
 ```
 
 The smoke test drives the real UI: staff logs an expense with a receipt on a phone-sized screen, sees the duplicate warning, uploads a forged PDF (rejected), accountant approves, records a return, reconciles to ₦0, downloads Excel/CSV/PDF exports, an over-spend claim goes through recommend → approve, and an accountant adds an ad-hoc staff member who signs in with the issued password and chooses to keep it.
@@ -139,4 +143,4 @@ e2e/smoke.mjs          end-to-end workflow test
 
 ## Roadmap (from the spec, not yet built)
 
-Receipt OCR, WhatsApp notifications, recurring allocations, bulk imports, and Phase 3 finance-operations features (purchase requests, vendors, budgets, bank matching, accounting integrations).
+WhatsApp notifications, recurring allocations, bulk imports, and Phase 3 finance-operations features (purchase requests, vendors, budgets, bank matching, accounting integrations).
