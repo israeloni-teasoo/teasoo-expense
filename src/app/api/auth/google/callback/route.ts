@@ -14,7 +14,7 @@ function fail(req: NextRequest, message: string) {
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   if (sp.get("error")) return fail(req, sp.get("error") === "access_denied" ? "Google sign-in was cancelled." : "Google sign-in failed.");
-  let saved: { state: string; nonce: string; verifier: string; next: string };
+  let saved: { state: string; nonce: string; verifier: string; next: string; redirectUri: string };
   try {
     saved = JSON.parse(req.cookies.get(GOOGLE_STATE_COOKIE)?.value ?? "");
   } catch {
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   const code = sp.get("code");
   if (!code || sp.get("state") !== saved.state) return fail(req, "Sign-in request did not match. Please try again.");
   try {
-    const identity = await exchangeCode(code, saved.verifier, saved.nonce);
+    const identity = await exchangeCode(code, saved.verifier, saved.nonce, saved.redirectUri);
     await signInWithGoogle(identity);
   } catch (e) {
     console.error("[google-auth]", e);

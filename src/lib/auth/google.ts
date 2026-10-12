@@ -12,9 +12,18 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 
 export const GOOGLE_STATE_COOKIE = "tx_google";
-export const redirectUri = () => `${config.appUrl}/api/auth/google/callback`;
+export const CALLBACK_PATH = "/api/auth/google/callback";
 
-export function createAuthRequest(next: string) {
+/**
+ * The callback URL is built from the domain the person is actually using (not APP_URL), so a
+ * stale or mistyped APP_URL can't cause Google's redirect_uri_mismatch. Every domain people sign
+ * in from must still be listed under "Authorised redirect URIs" on the Google OAuth client.
+ */
+export function redirectUriFor(origin: string) {
+  return `${origin.replace(/\/$/, "")}${CALLBACK_PATH}`;
+}
+
+export function createAuthRequest(next: string, redirectUri: string) {
   const state = randomBytes(16).toString("base64url");
   const nonce = randomBytes(16).toString("base64url");
   const verifier = randomBytes(32).toString("base64url");
@@ -22,7 +31,7 @@ export function createAuthRequest(next: string) {
   const url = new URL(AUTH_URL);
   url.search = new URLSearchParams({
     client_id: config.google.clientId,
-    redirect_uri: redirectUri(),
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: "openid email profile",
     state,
@@ -33,7 +42,7 @@ export function createAuthRequest(next: string) {
     hd: config.companyDomain,
     prompt: "select_account",
   }).toString();
-  return { url: url.toString(), cookie: JSON.stringify({ state, nonce, verifier, next }) };
+  return { url: url.toString(), cookie: JSON.stringify({ state, nonce, verifier, next, redirectUri }) };
 }
 
 export type GoogleIdentity = { sub: string; email: string; firstName: string; lastName: string };
@@ -59,7 +68,7 @@ export function validateGoogleClaims(claims: JWTPayload & Record<string, unknown
   };
 }
 
-export async function exchangeCode(code: string, verifier: string, nonce: string): Promise<GoogleIdentity> {
+export async function exchangeCode(code: string, verifier: string, nonce: string, redirectUri: string): Promise<GoogleIdentity> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -67,7 +76,7 @@ export async function exchangeCode(code: string, verifier: string, nonce: string
       code,
       client_id: config.google.clientId,
       client_secret: config.google.clientSecret,
-      redirect_uri: redirectUri(),
+      redirect_uri: redirectUri,
       grant_type: "authorization_code",
       code_verifier: verifier,
     }),
