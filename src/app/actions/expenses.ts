@@ -25,6 +25,7 @@ function readExpense(fd: FormData): ExpenseInput {
   return {
     allocationId: str(fd, "allocationId"),
     categoryId: str(fd, "categoryId"),
+    categoryOther: opt(fd, "categoryOther"),
     projectId: opt(fd, "projectId"),
     expenseDate: str(fd, "expenseDate"),
     amount: money(fd, "amount"),

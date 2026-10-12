@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { Archive, Ban, CheckCircle2, HandCoins, Pencil, PiggyBank, Plus, RotateCcw, Scale, Undo2 } from "lucide-react";
 import { DocumentGrid } from "@/components/domain/documents";
 import { ExpenseTable } from "@/components/domain/expense-table";
@@ -11,6 +10,7 @@ import { LinkButton } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Alert, DescriptionList, EmptyState, PageHeader, Progress } from "@/components/ui/misc";
 import { ModalButton } from "@/components/ui/modal";
+import { notFoundOrSwitch } from "@/lib/org-redirect";
 import { requireUser } from "@/lib/auth/current";
 import { cn } from "@/lib/cn";
 import { formatDate, formatDateTime, todayISO } from "@/lib/dates";
@@ -36,8 +36,8 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
   const { id } = await params;
   const { tab: tabParam } = await searchParams;
   const tab = TABS.find((t) => t.key === tabParam)?.key ?? "expenses";
-  const d = await getAllocationDetail(user, id).catch((e) => {
-    if (e instanceof DomainError) notFound();
+  const d = await getAllocationDetail(user, id).catch(async (e) => {
+    if (e instanceof DomainError) await notFoundOrSwitch(user, "allocation", id, `/allocations/${id}`);
     throw e;
   });
   const a = d.allocation;

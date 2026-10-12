@@ -53,6 +53,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       ) : (
         passwordForm
       )}
+      <p className="mt-6 text-center text-xs text-gray-500">Access is by invitation. If you can&apos;t sign in, ask your administrator or accountant to invite you.</p>
       {demo && (
         <div className="mt-8 rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-xs text-gray-600">
           <p className="mb-2 font-semibold text-gray-700">Demo accounts (password: Password123)</p>

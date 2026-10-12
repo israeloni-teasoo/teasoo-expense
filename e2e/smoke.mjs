@@ -347,19 +347,19 @@ ok(await p.getByText("Reimbursement", { exact: true }).first().isVisible(), "app
   await adm.ctx.close();
 }
 
-// ---- Ad-hoc staff: accountant adds someone without a company email ----
+// ---- Ad-hoc staff: accountant invites someone without a company email ----
 p = acct.page;
 await p.goto(BASE + "/admin/users", { waitUntil: "networkidle" });
-await p.getByRole("button", { name: "Add ad-hoc staff" }).click();
+await p.getByRole("button", { name: "Invite user" }).click();
 const adhocEmail = `contractor${Date.now()}@example.com`;
 await p.fill("#firstName", "Bayo");
 await p.fill("#lastName", "Contractor");
 await p.fill("#email", adhocEmail);
-await p.getByRole("button", { name: "Add user" }).click();
+await p.getByRole("button", { name: "Send invite" }).click();
 const pwCell = p.locator("dd.font-mono");
 await pwCell.waitFor({ timeout: 15000 });
 const issued = (await pwCell.textContent()).trim();
-ok(/^[A-Z][a-z]+-[A-Z][a-z]+-\d{4}$/.test(issued), `accountant added ad-hoc staff and was shown a generated password`);
+ok(/^[A-Z][a-z]+-[A-Z][a-z]+-\d{4}$/.test(issued), `accountant invited ad-hoc staff and was shown a generated password`);
 
 const adhoc = await session(adhocEmail.replace("Password123", ""), { width: 390, height: 844 }).catch(() => null);
 ok(adhoc === null, "generated password is required (demo password rejected)");
@@ -376,6 +376,98 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
   await page.waitForTimeout(1500);
   await page.reload({ waitUntil: "networkidle" });
   ok(!(await page.getByText("You're using a password that was set for you.").isVisible()), "choosing to keep the password dismisses the prompt");
+  await ctx.close();
+}
+
+// ---- "Others" category with a typed category ----
+{
+  const st = await session("staff@teasoo.test");
+  const sp = st.page;
+  await sp.goto(BASE + "/expenses/new", { waitUntil: "networkidle" });
+  await sp.getByText("Staff Training Logistics").click();
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.fill("#amount", "7,500");
+  await sp.fill("#description", "Courtesy visit gift for venue manager");
+  await sp.selectOption("#categoryId", { label: "Others (not listed)" });
+  ok(await sp.locator("#categoryOther").isVisible(), "choosing Others shows a field to type the category");
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  ok(await sp.getByText("Type the category for this expense.").isVisible(), "the typed category is required");
+  await sp.fill("#categoryOther", "Gifts");
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  ok(await sp.getByText("Others: Gifts").first().isVisible(), "review step shows Others: Gifts");
+  await sp.getByRole("button", { name: /Save draft/ }).last().click();
+  await sp.waitForURL(/\/expenses\/[0-9a-f-]{36}$/, { timeout: 20000 });
+  ok(await sp.getByText("Others: Gifts").first().isVisible(), "saved expense shows the typed category");
+  await st.ctx.close();
+}
+
+// ---- Multiple organisations ----
+{
+  const adm = await session("admin@teasoo.test");
+  const ap = adm.page;
+  await ap.goto(BASE + "/dashboard", { waitUntil: "networkidle" });
+  await ap.getByTestId("org-switcher").first().click();
+  ok(await ap.getByRole("menuitem", { name: /Teasoo Logistics Ltd/ }).isVisible(), "admin's organisation menu lists the subsidiary");
+  await ap.getByRole("menuitem", { name: /Teasoo Logistics Ltd/ }).click();
+  await ap.waitForURL(/\/dashboard/, { timeout: 20000 });
+  await ap.goto(BASE + "/allocations", { waitUntil: "networkidle" });
+  ok(
+    (await ap.getByText("Fleet fuel and maintenance").first().isVisible()) && (await ap.getByText("Staff Training Logistics").count()) === 0,
+    "after switching, admin sees only the subsidiary's allocations",
+  );
+  await ap.getByText("Warehouse inspection trip").first().click();
+  await ap.waitForURL(/\/allocations\/[0-9a-f-]{36}/, { timeout: 20000 });
+  const logisticsAllocationUrl = ap.url().split("?")[0];
+
+  // Invite an existing person (Jane, in Consulting only) into the subsidiary.
+  await ap.goto(BASE + "/admin/users", { waitUntil: "networkidle" });
+  ok((await ap.getByText("Kemi Adewale").count()) > 0 && (await ap.getByText("Jane Doe").count()) === 0, "users page lists the active organisation's members only");
+  await ap.getByRole("button", { name: "Invite user" }).click();
+  await ap.fill("#firstName", "Jane");
+  await ap.fill("#lastName", "Doe");
+  await ap.fill("#email", "jane@teasoo.test");
+  await ap.getByRole("button", { name: "Send invite" }).click();
+  await ap.getByText(/already had an account and now also has access/).waitFor({ timeout: 15000 });
+  ok(true, "inviting an existing user adds them to another organisation");
+
+  // A new organisation
+  await ap.goto(BASE + "/admin/organisations", { waitUntil: "networkidle" });
+  const newOrg = `Teasoo Ventures ${Date.now() % 100000}`;
+  await ap.getByRole("button", { name: "Add organisation" }).click();
+  await ap.fill("#org-name", newOrg);
+  await ap.locator('input[name="logo"]').setInputFiles(png);
+  await ap.getByRole("button", { name: "Create organisation" }).click();
+  await ap.getByText(/Organisation created/).waitFor({ timeout: 15000 });
+  await ap.reload({ waitUntil: "networkidle" });
+  ok(await ap.getByText(newOrg).first().isVisible(), "group admin created a new organisation");
+  ok((await ap.locator('img[src*="/api/organisations/"]').count()) > 0, "the new organisation's logo is shown");
+  await adm.ctx.close();
+
+  // Kemi only belongs to the subsidiary: no switcher menu, lands in Logistics.
+  const kemi = await session("kemi@teasoo.test", { width: 390, height: 844 });
+  await kemi.page.goto(BASE + "/funds", { waitUntil: "networkidle" });
+  ok(
+    (await kemi.page.locator("header").getByText("Teasoo Logistics Ltd").first().isVisible()) && (await kemi.page.getByTestId("org-switcher").count()) === 0,
+    "single-organisation staff see their company without a switcher",
+  );
+  ok(await kemi.page.getByText("Fleet fuel and maintenance").first().isVisible(), "staff in the subsidiary see their funds there");
+  await kemi.ctx.close();
+
+  // Israel works in both; a link to a subsidiary record switches organisation automatically.
+  const isr = await session("staff@teasoo.test");
+  await isr.page.goto(logisticsAllocationUrl, { waitUntil: "networkidle" });
+  ok(
+    (await isr.page.getByText("Warehouse inspection trip").first().isVisible()) && /\/allocations\//.test(isr.page.url()),
+    "opening a record from another organisation switches to it",
+  );
+  await isr.ctx.close();
+
+  // Nobody can sign in without an invitation.
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(BASE + "/login", { waitUntil: "networkidle" });
+  ok(await page.getByText(/Access is by invitation/).isVisible(), "login page explains access is by invitation");
   await ctx.close();
 }
 

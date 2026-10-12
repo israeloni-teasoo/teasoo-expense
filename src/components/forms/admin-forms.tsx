@@ -7,7 +7,7 @@ import { useModal } from "@/components/ui/modal";
 import { Checkbox, Input, MoneyInput, Select, Textarea } from "@/components/ui/form";
 import { koboToInput } from "@/lib/money";
 import type { OrgSettings, Role } from "@/db/schema";
-import { resendLoginAction, saveCategoryAction, saveDepartmentAction, saveProjectAction, saveSettingsAction, saveUserAction, type IssuedCredentials } from "@/app/actions/admin";
+import { resendInviteAction, resendLoginAction, saveCategoryAction, saveDepartmentAction, saveProjectAction, saveSettingsAction, saveUserAction, type IssuedCredentials } from "@/app/actions/admin";
 import { updateProfileAction } from "@/app/actions/account";
 
 type Opt = { id: string; name: string };
@@ -50,12 +50,25 @@ export function ProfileForm({ phone, emailNotifications, hasPassword }: { phone:
 
 function CredentialsPanel({ creds, onDone }: { creds: IssuedCredentials; onDone?: () => void }) {
   const [copied, setCopied] = useState(false);
-  if (creds.google) {
+  if (creds.existing || creds.google) {
+    const orgs = creds.organisations?.join(", ");
     return (
       <div className="space-y-3">
         <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-          <span className="font-semibold">{creds.email}</span> has been added. They sign in with “Sign in with Google” — no password needed.
+          {creds.existing ? (
+            <>
+              <span className="font-semibold">{creds.email}</span> already had an account and now also has access to <span className="font-semibold">{orgs}</span>.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">{creds.email}</span> has been invited{orgs ? <> to <span className="font-semibold">{orgs}</span></> : null}. They sign in with “Sign in with Google” — no password needed.
+            </>
+          )}
         </p>
+        {creds.emailed === false && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">The invitation email could not be sent. Let them know they can sign in at {window.location.origin}/login.</p>
+        )}
+        {creds.emailed && <p className="text-sm text-gray-600">An email with sign-in instructions is on its way.</p>}
         {onDone && <div className="flex justify-end"><Button type="button" onClick={onDone}>Done</Button></div>}
       </div>
     );
@@ -91,24 +104,49 @@ function CredentialsPanel({ creds, onDone }: { creds: IssuedCredentials; onDone?
   );
 }
 
+export type OrgOption = { id: string; name: string; anyRole: boolean };
+
 export function UserForm({
   user,
   departments,
   canChooseRole = true,
   companyDomain,
   googleSignIn,
+  orgOptions = [],
+  activeOrg,
+  canGrantGroupAdmin = false,
 }: {
-  user?: { id: string; firstName: string; lastName: string; email: string; phone: string | null; jobTitle: string | null; role: Role; departmentId: string | null; status: string };
+  user?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+    jobTitle: string | null;
+    role: Role;
+    departmentId: string | null;
+    status: string;
+    isGroupAdmin?: boolean;
+    /** Organisations the person currently belongs to. */
+    organisationIds?: string[];
+  };
   departments: Opt[];
-  /** Accountants can only add ad-hoc staff. */
+  /** Accountants can only add staff. */
   canChooseRole?: boolean;
   companyDomain: string;
   googleSignIn: boolean;
+  /** Organisations the actor manages (for inviting into several at once, or adding access later). */
+  orgOptions?: OrgOption[];
+  activeOrg: { id: string; name: string };
+  canGrantGroupAdmin?: boolean;
 }) {
   const [email, setEmail] = useState(user?.email ?? "");
   const [creds, setCreds] = useState<IssuedCredentials | null>(null);
   const modal = useModal();
   const usesGoogle = googleSignIn && email.trim().toLowerCase().endsWith("@" + companyDomain);
+  // When editing, only other organisations where the actor is an administrator can be toggled.
+  const orgChoices = user ? orgOptions.filter((o) => o.anyRole && o.id !== activeOrg.id) : orgOptions;
+  const showOrgs = user ? orgChoices.length > 0 : orgChoices.length > 1;
   if (creds) return <CredentialsPanel creds={creds} onDone={() => modal?.close()} />;
   return (
     <ActionForm
@@ -119,9 +157,11 @@ export function UserForm({
       }}
     >
       {user && <input type="hidden" name="userId" value={user.id} />}
-      {!user && !canChooseRole && (
+      {!user && (
         <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
-          For people without an @{companyDomain} email — contractors, temporary or field staff. They sign in with an email and password.
+          People can only sign in after they&apos;re invited.{" "}
+          {googleSignIn ? `@${companyDomain} staff sign in with Google; anyone else gets a password.` : "They'll get a password to sign in with."}
+          {" "}If they already have an account, they&apos;re simply given access to the organisations you choose.
         </p>
       )}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -141,7 +181,7 @@ export function UserForm({
           <Input id="email" name="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </FormField>
         {canChooseRole ? (
-          <FormField name="role" label="Role" required>
+          <FormField name="role" label={user ? `Role in ${activeOrg.name}` : "Role"} required>
             <Select id="role" name="role" defaultValue={user?.role ?? "STAFF"}>
               <option value="STAFF">Staff</option>
               <option value="ACCOUNTANT">Accountant</option>
@@ -152,7 +192,7 @@ export function UserForm({
         ) : (
           <input type="hidden" name="role" value="STAFF" />
         )}
-        <FormField name="departmentId" label="Department">
+        <FormField name="departmentId" label={`Department in ${activeOrg.name}`}>
           <Select id="departmentId" name="departmentId" defaultValue={user?.departmentId ?? ""}>
             <option value="">—</option>
             {departments.map((d) => (
@@ -167,10 +207,10 @@ export function UserForm({
           <Input id="phone" name="phone" type="tel" defaultValue={user?.phone ?? ""} />
         </FormField>
         {user && (
-          <FormField name="status" label="Status">
+          <FormField name="status" label={`Access to ${activeOrg.name}`}>
             <Select id="status" name="status" defaultValue={user.status}>
               <option value="ACTIVE">Active</option>
-              <option value="SUSPENDED">Suspended (cannot sign in)</option>
+              <option value="SUSPENDED">Suspended (cannot use this organisation)</option>
             </Select>
           </FormField>
         )}
@@ -184,16 +224,71 @@ export function UserForm({
           </FormField>
         )}
       </div>
+      {showOrgs && (
+        <fieldset className="rounded-lg border border-gray-200 p-3">
+          <input type="hidden" name="orgsShown" value="1" />
+          <legend className="px-1 text-sm font-medium text-gray-900">{user ? "Other organisations" : "Organisations"}</legend>
+          <p className="mb-2 text-xs text-gray-500">
+            {user
+              ? `They keep access to ${activeOrg.name}. Tick other companies they should also work in (with the role above); untick to remove access.`
+              : "Invite them into one or more companies. You can change this later."}
+          </p>
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {orgChoices.map((o) => (
+              <label key={o.id} className="flex items-start gap-2 rounded-md px-1 py-1 text-sm hover:bg-gray-50">
+                <input
+                  type="checkbox"
+                  name="organisationIds"
+                  value={o.id}
+                  defaultChecked={user ? !!user.organisationIds?.includes(o.id) : o.id === activeOrg.id}
+                  autoComplete="off"
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-700 focus:ring-brand-600"
+                />
+                <span>
+                  {o.name}
+                  {!o.anyRole && <span className="block text-xs text-gray-500">Staff only (you&apos;re an accountant here)</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {!showOrgs && !user && <input type="hidden" name="organisationIds" value={activeOrg.id} />}
+      {canGrantGroupAdmin && user && (
+        <>
+          <input type="hidden" name="groupAdminShown" value="1" />
+          <Checkbox
+            name="isGroupAdmin"
+            defaultChecked={!!user.isGroupAdmin}
+            label="Group administrator"
+            description="Can see and manage every organisation, including adding new subsidiaries."
+          />
+        </>
+      )}
       {!usesGoogle && (
         <Checkbox
           name="sendCredentials"
           defaultChecked={!user}
-          label="Email the login details to them"
+          label={user ? "Email the new login details to them" : "Email the invitation with their login details"}
           description="They can keep the password or change it after signing in."
         />
       )}
       <div className="flex justify-end">
-        <SubmitButton pendingText="Saving…">{user ? "Save changes" : "Add user"}</SubmitButton>
+        <SubmitButton pendingText={user ? "Saving…" : "Inviting…"}>{user ? "Save changes" : "Send invite"}</SubmitButton>
+      </div>
+    </ActionForm>
+  );
+}
+
+export function ResendInviteForm({ userId, email }: { userId: string; email: string }) {
+  return (
+    <ActionForm action={resendInviteAction}>
+      <input type="hidden" name="userId" value={userId} />
+      <p className="text-sm text-gray-600">
+        Send the invitation to <span className="font-medium text-gray-900">{email}</span> again. It tells them to sign in with Google using this address.
+      </p>
+      <div className="flex justify-end">
+        <SubmitButton pendingText="Sending…">Resend invite</SubmitButton>
       </div>
     </ActionForm>
   );
@@ -218,7 +313,7 @@ export function ResendLoginForm({ userId, email }: { userId: string; email: stri
   );
 }
 
-export function CategoryForm({ c }: { c?: { id: string; name: string; description: string | null; keywords: string | null; receiptRequired: boolean; archived: boolean } }) {
+export function CategoryForm({ c }: { c?: { id: string; name: string; description: string | null; keywords: string | null; receiptRequired: boolean; isOther: boolean; archived: boolean } }) {
   return (
     <ActionForm action={saveCategoryAction} resetOnSuccess={!c}>
       {c && <input type="hidden" name="id" value={c.id} />}
@@ -232,6 +327,7 @@ export function CategoryForm({ c }: { c?: { id: string; name: string; descriptio
         <Textarea id="keywords" name="keywords" rows={2} defaultValue={c?.keywords ?? ""} />
       </FormField>
       <Checkbox name="receiptRequired" defaultChecked={c?.receiptRequired ?? true} label="Receipt required" description="Enforced when “Require receipts before funded expenses can be submitted” is on in Settings. Personal-spend claims always need a receipt." />
+      <Checkbox name="isOther" defaultChecked={c?.isOther ?? false} label="Staff type the category" description="For an “Others” category: when chosen, staff must type what the expense was (e.g. Gifts)." />
       {c && <Checkbox name="archived" defaultChecked={c.archived} label="Archived" description="Hidden from new expenses; existing records keep it." />}
       <div className="flex justify-end">
         <SubmitButton pendingText="Saving…">Save category</SubmitButton>

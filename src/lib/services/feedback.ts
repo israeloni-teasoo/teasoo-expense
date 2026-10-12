@@ -138,6 +138,7 @@ export async function respondToFeedback(actor: CurrentUser, id: string, input: {
     });
     if (current.userId !== actor.id && (response || input.status !== current.status)) {
       await notifyUsers(tx, [current.userId], {
+        organisationId: actor.organisationId,
         type: "FEEDBACK_REPLY",
         title: response ? `Reply to your feedback: ${current.subject}` : `Your feedback is now ${FEEDBACK_STATUS[input.status].label.toLowerCase()}`,
         body: response ?? current.subject,

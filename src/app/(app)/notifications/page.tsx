@@ -18,6 +18,10 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   const { filter } = await searchParams;
   const items = await listNotifications(user, filter === "unread" ? "unread" : "all");
   const unread = items.filter((n) => !n.readAt).length;
+  const multiOrg = user.organisations.length > 1;
+  const orgName = new Map(user.organisations.map((o) => [o.organisationId, o.name]));
+  // Links to records in another organisation switch to it first.
+  const elsewhere = (orgId: string | null) => !!orgId && orgId !== user.organisationId && orgName.has(orgId);
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader
@@ -43,13 +47,18 @@ export default async function NotificationsPage({ searchParams }: { searchParams
               <li key={n.id} className={cn("flex gap-3 px-4 py-3 sm:px-5", !n.readAt && "bg-brand-50/50")}>
                 <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", n.readAt ? "bg-transparent" : "bg-brand-600")} />
                 <div className="min-w-0 flex-1">
-                  {n.link ? (
+                  {n.link && elsewhere(n.organisationId) ? (
+                    <a href={`/api/org/switch?org=${n.organisationId}&next=${encodeURIComponent(n.link)}`} className="text-sm font-medium text-gray-900 hover:text-brand-700">{n.title}</a>
+                  ) : n.link ? (
                     <Link href={n.link} className="text-sm font-medium text-gray-900 hover:text-brand-700">{n.title}</Link>
                   ) : (
                     <p className="text-sm font-medium text-gray-900">{n.title}</p>
                   )}
                   {n.body && <p className="mt-0.5 text-sm text-gray-600">{n.body}</p>}
-                  <p className="mt-1 text-xs text-gray-400">{relativeTime(n.createdAt)}</p>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {relativeTime(n.createdAt)}
+                    {multiOrg && n.organisationId && orgName.has(n.organisationId) ? ` · ${orgName.get(n.organisationId)}` : ""}
+                  </p>
                 </div>
                 {!n.readAt && (
                   <form action={markReadAction}>

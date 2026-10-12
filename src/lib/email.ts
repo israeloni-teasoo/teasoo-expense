@@ -67,10 +67,16 @@ export function notificationEmail(n: { title: string; body?: string | null; link
   };
 }
 
-export function credentialsEmail(p: { name: string; email: string; password: string; addedBy: string }): Omit<Email, "to"> {
+function orgList(orgs: string[] | undefined) {
+  if (!orgs?.length) return "";
+  return orgs.length === 1 ? orgs[0] : `${orgs.slice(0, -1).join(", ")} and ${orgs[orgs.length - 1]}`;
+}
+
+export function credentialsEmail(p: { name: string; email: string; password: string; addedBy: string; organisations?: string[] }): Omit<Email, "to"> {
   const loginUrl = `${config.appUrl}/login`;
+  const where = p.organisations?.length ? ` for ${esc(orgList(p.organisations))}` : "";
   const html = `<p style="margin:0 0 12px">Hi ${esc(p.name)},</p>
-<p style="margin:0 0 12px">${esc(p.addedBy)} has given you access to Teasoo Funds &amp; Expenses, where you log how funds you receive are spent and upload receipts.</p>
+<p style="margin:0 0 12px">${esc(p.addedBy)} has invited you to Teasoo Funds &amp; Expenses${where}, where you log how funds you receive are spent and upload receipts.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" style="background:#f3f4f6;border-radius:8px;padding:12px 16px;margin:0 0 12px;font-size:14px">
 <tr><td style="color:#6b7280;padding-right:12px">Email</td><td style="font-weight:600">${esc(p.email)}</td></tr>
 <tr><td style="color:#6b7280;padding-right:12px">Password</td><td style="font-family:monospace;font-weight:600">${esc(p.password)}</td></tr>
@@ -79,7 +85,32 @@ export function credentialsEmail(p: { name: string; email: string; password: str
   return {
     subject: "Your Teasoo Funds & Expenses login",
     html: layout("Your login details", html, { label: "Sign in", url: loginUrl }),
-    text: `Hi ${p.name},\n\n${p.addedBy} has given you access to Teasoo Funds & Expenses.\n\nSign in at ${loginUrl}\nEmail: ${p.email}\nPassword: ${p.password}\n\nAfter signing in you can keep this password or change it from your profile.`,
+    text: `Hi ${p.name},\n\n${p.addedBy} has invited you to Teasoo Funds & Expenses${p.organisations?.length ? ` for ${orgList(p.organisations)}` : ""}.\n\nSign in at ${loginUrl}\nEmail: ${p.email}\nPassword: ${p.password}\n\nAfter signing in you can keep this password or change it from your profile.`,
+  };
+}
+
+/** Invitation for people who sign in with their company Google account. */
+export function googleInviteEmail(p: { name: string; email: string; addedBy: string; organisations: string[] }): Omit<Email, "to"> {
+  const loginUrl = `${config.appUrl}/login`;
+  const html = `<p style="margin:0 0 12px">Hi ${esc(p.name)},</p>
+<p style="margin:0 0 12px">${esc(p.addedBy)} has invited you to Teasoo Funds &amp; Expenses for <strong>${esc(orgList(p.organisations))}</strong>, where you log how funds you receive are spent and upload receipts.</p>
+<p style="margin:0">Open the link below and choose <strong>Sign in with Google</strong> using <strong>${esc(p.email)}</strong>. There's no password to remember.</p>`;
+  return {
+    subject: `You're invited to Teasoo Funds & Expenses`,
+    html: layout("You're invited", html, { label: "Sign in with Google", url: loginUrl }),
+    text: `Hi ${p.name},\n\n${p.addedBy} has invited you to Teasoo Funds & Expenses for ${orgList(p.organisations)}.\n\nSign in at ${loginUrl} with "Sign in with Google" using ${p.email}.`,
+  };
+}
+
+/** Sent to an existing user who has been given access to more organisations. */
+export function addedToOrganisationEmail(p: { name: string; addedBy: string; organisations: string[] }): Omit<Email, "to"> {
+  const loginUrl = `${config.appUrl}/login`;
+  const html = `<p style="margin:0 0 12px">Hi ${esc(p.name)},</p>
+<p style="margin:0">${esc(p.addedBy)} has given you access to <strong>${esc(orgList(p.organisations))}</strong> on Teasoo Funds &amp; Expenses. Use the organisation menu at the top left to switch between companies.</p>`;
+  return {
+    subject: `You now have access to ${orgList(p.organisations)}`,
+    html: layout("New organisation access", html, { label: "Open Teasoo", url: loginUrl }),
+    text: `Hi ${p.name},\n\n${p.addedBy} has given you access to ${orgList(p.organisations)} on Teasoo Funds & Expenses. Use the organisation menu at the top left to switch between companies.\n\n${loginUrl}`,
   };
 }
 

@@ -5,7 +5,6 @@ import { allocations, claims, expenses } from "@/db/schema";
 import { AppShell, type NavItem, type NavSection } from "@/components/shell/app-shell";
 import { requireUser } from "@/lib/auth/current";
 import { can, ROLE_LABELS } from "@/lib/rbac";
-import { getOrg } from "@/lib/services/org";
 import { unreadCount } from "@/lib/services/notifications";
 import { runSweep } from "@/lib/services/sweep";
 import { openFeedbackCount } from "@/lib/services/feedback";
@@ -20,8 +19,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
   await runSweep(user.organisationId).catch((e) => console.error("sweep failed", e));
 
-  const [org, unread, reviewCount, claimCount, attentionCount, feedbackCount] = await Promise.all([
-    getOrg(user.organisationId),
+  const [unread, reviewCount, claimCount, attentionCount, feedbackCount] = await Promise.all([
     unreadCount(user.id),
     can(user.role, "expenses.review")
       ? db
@@ -47,7 +45,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     db
       .select({ c: sql<number>`count(*)::int` })
       .from(expenses)
-      .where(and(eq(expenses.staffId, user.id), inArray(expenses.status, ["REJECTED", "NEEDS_CLARIFICATION"])))
+      .innerJoin(allocations, eq(allocations.id, expenses.allocationId))
+      .where(and(eq(allocations.organisationId, user.organisationId), eq(expenses.staffId, user.id), inArray(expenses.status, ["REJECTED", "NEEDS_CLARIFICATION"])))
       .then((r) => Number(r[0].c)),
     can(user.role, "feedback.manage") ? openFeedbackCount(user.organisationId) : 0,
   ]);
@@ -106,6 +105,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         admin.push({ href: "/admin/projects", label: "Projects", icon: "folder" });
         admin.push({ href: "/admin/settings", label: "Settings", icon: "settings" });
       }
+      if (user.isGroupAdmin) admin.push({ href: "/admin/organisations", label: "Organisations", icon: "building" });
       if (can(user.role, "feedback.manage")) admin.push({ href: "/admin/feedback", label: "Feedback inbox", icon: "feedback", badge: feedbackCount });
       if (can(user.role, "audit.view")) admin.push({ href: "/admin/audit", label: "Audit log", icon: "audit" });
       sections.push({ title: "Administration", items: admin });
@@ -142,7 +142,16 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       bottomNav={bottomNav}
       user={{ name: user.fullName, role: ROLE_LABELS[user.role], email: user.email }}
       unread={unread}
-      orgName={org.name}
+      org={{
+        activeId: user.organisationId,
+        manageHref: user.isGroupAdmin ? "/admin/organisations" : null,
+        orgs: user.organisations.map((o) => ({
+          id: o.organisationId,
+          name: o.name,
+          role: ROLE_LABELS[o.role],
+          logoUrl: o.hasLogo ? `/api/organisations/${o.organisationId}/logo?v=${o.version}` : null,
+        })),
+      }}
       logoutAction={logoutAction}
     >
       {user.passwordSetByAdmin && user.hasPassword && (

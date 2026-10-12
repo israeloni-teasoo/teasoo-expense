@@ -2,11 +2,13 @@ import "server-only";
 import { after } from "next/server";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { db, type Executor } from "@/db";
-import { notifications, users, type Role } from "@/db/schema";
+import { memberships, notifications, users, type Role } from "@/db/schema";
 import { emailEnabled } from "./config";
 import { notificationEmail, sendEmail } from "./email";
 
 export type NotificationInput = {
+  /** Organisation the notification is about; its link opens in that organisation. */
+  organisationId: string;
   type: string;
   title: string;
   body?: string;
@@ -32,6 +34,7 @@ export async function notifyUsers(exec: Executor, userIds: string[], n: Notifica
     .values(
       targets.map((userId) => ({
         userId,
+        organisationId: n.organisationId,
         type: n.type,
         title: n.title,
         body: n.body ?? null,
@@ -66,21 +69,30 @@ function scheduleEmails(ids: string[]) {
   }
 }
 
-/** Notify every active user with one of the given roles (e.g. all accountants), optionally excluding the actor. */
+/** Notify every active member of the organisation with one of the given roles (e.g. all accountants), optionally excluding the actor. */
 export async function notifyRoles(
   exec: Executor,
   organisationId: string,
   roles: Role[],
-  n: NotificationInput,
+  n: Omit<NotificationInput, "organisationId">,
   excludeUserId?: string,
 ) {
-  const conditions = [eq(users.organisationId, organisationId), inArray(users.role, roles), eq(users.status, "ACTIVE")];
+  const conditions = [
+    eq(memberships.organisationId, organisationId),
+    inArray(memberships.role, roles),
+    eq(memberships.status, "ACTIVE"),
+    eq(users.status, "ACTIVE"),
+  ];
   if (excludeUserId) conditions.push(ne(users.id, excludeUserId));
-  const rows = await exec.select({ id: users.id }).from(users).where(and(...conditions));
+  const rows = await exec
+    .select({ id: users.id })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(and(...conditions));
   await notifyUsers(
     exec,
     rows.map((r) => r.id),
-    n,
+    { ...n, organisationId },
   );
 }
 

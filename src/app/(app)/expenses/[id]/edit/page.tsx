@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { ExpenseForm } from "@/components/forms/expense-form";
 import { Alert, PageHeader } from "@/components/ui/misc";
+import { notFoundOrSwitch } from "@/lib/org-redirect";
 import { requirePagePermission } from "@/lib/auth/current";
 import { PENDING_STATUSES } from "@/lib/balance";
 import { todayISO } from "@/lib/dates";
@@ -15,8 +16,8 @@ export const metadata: Metadata = { title: "Edit expense" };
 export default async function EditExpensePage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePagePermission("funds.own");
   const { id } = await params;
-  const detail = await getExpenseDetail(user, id).catch((e) => {
-    if (e instanceof DomainError) notFound();
+  const detail = await getExpenseDetail(user, id).catch(async (e) => {
+    if (e instanceof DomainError) await notFoundOrSwitch(user, "expense", id, `/expenses/${id}/edit`);
     throw e;
   });
   if (!detail.canEdit) redirect(`/expenses/${id}`);
@@ -45,6 +46,7 @@ export default async function EditExpensePage({ params }: { params: Promise<{ id
           id: e.id,
           allocationId: e.allocationId,
           categoryId: e.categoryId,
+          categoryOther: e.categoryOther,
           projectId: e.projectId,
           expenseDate: e.expenseDate,
           amount: e.amount,

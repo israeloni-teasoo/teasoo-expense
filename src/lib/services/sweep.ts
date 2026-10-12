@@ -24,6 +24,7 @@ export async function runSweep(orgId: string) {
     .where(and(eq(allocations.organisationId, orgId), eq(allocations.status, "ACTIVE"), lt(allocations.expectedCompletionDate, today)));
   for (const a of overdue) {
     await notifyUsers(db, [a.staffId], {
+      organisationId: orgId,
       type: "ALLOCATION_OVERDUE",
       title: `${a.purpose} is overdue`,
       body: `Expected completion was ${a.expectedCompletionDate}. Log any remaining expenses and arrange to return unspent funds.`,

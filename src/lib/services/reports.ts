@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { allocationAdjustments, allocations, departments, documents, expenseCategories, expenses, fundReturns, projects, users } from "@/db/schema";
+import { allocationAdjustments, allocations, departments, documents, expenseCategories, expenses, fundReturns, memberships, projects, users } from "@/db/schema";
 import type { CurrentUser } from "@/lib/auth/current";
 import { APPROVED_STATUSES, PENDING_STATUSES, personalSpendOwed, type BalanceSummary } from "@/lib/balance";
 import { addDays, todayISO } from "@/lib/dates";
@@ -9,6 +9,7 @@ import { formatMoney } from "@/lib/money";
 import { can } from "@/lib/rbac";
 import { listAllocations, type AllocationListItem } from "./allocations";
 import { getSettings } from "./org";
+import { categoryLabelSql } from "@/lib/category-label";
 
 const SPEND_STATUSES = [...APPROVED_STATUSES, ...PENDING_STATUSES];
 
@@ -66,7 +67,14 @@ export async function staffDashboard(actor: CurrentUser) {
       updatedAt: expenses.updatedAt,
     })
     .from(expenses)
-    .where(and(eq(expenses.staffId, actor.id), inArray(expenses.status, ["REJECTED", "NEEDS_CLARIFICATION", "DRAFT"])))
+    .innerJoin(allocations, eq(allocations.id, expenses.allocationId))
+    .where(
+      and(
+        eq(allocations.organisationId, actor.organisationId),
+        eq(expenses.staffId, actor.id),
+        inArray(expenses.status, ["REJECTED", "NEEDS_CLARIFICATION", "DRAFT"]),
+      ),
+    )
     .orderBy(desc(expenses.updatedAt))
     .limit(10);
 
@@ -77,11 +85,11 @@ export async function staffDashboard(actor: CurrentUser) {
       amount: expenses.amount,
       status: expenses.status,
       expenseDate: expenses.expenseDate,
-      categoryName: expenseCategories.name,
+      categoryName: categoryLabelSql,
     })
     .from(expenses)
     .innerJoin(expenseCategories, eq(expenseCategories.id, expenses.categoryId))
-    .where(and(eq(expenses.staffId, actor.id), ne(expenses.status, "VOIDED")))
+    .where(and(eq(expenseCategories.organisationId, actor.organisationId), eq(expenses.staffId, actor.id), ne(expenses.status, "VOIDED")))
     .orderBy(desc(expenses.expenseDate), desc(expenses.createdAt))
     .limit(6);
 
@@ -458,14 +466,17 @@ export async function departmentReport(actor: CurrentUser, range: Range) {
 export async function staffDirectory(actor: CurrentUser) {
   const [people, allocs] = await Promise.all([
     db
-      .select({ user: users, departmentName: departments.name })
-      .from(users)
-      .leftJoin(departments, eq(departments.id, users.departmentId))
-      .where(eq(users.organisationId, actor.organisationId))
+      .select({ user: users, role: memberships.role, departmentId: memberships.departmentId, memberStatus: memberships.status, departmentName: departments.name })
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .leftJoin(departments, eq(departments.id, memberships.departmentId))
+      .where(eq(memberships.organisationId, actor.organisationId))
       .orderBy(asc(users.firstName)),
     listAllocations(actor, { status: "all" }),
   ]);
-  return people.map(({ user, departmentName }) => {
+  return people.map(({ user: person, role, departmentId, memberStatus, departmentName }) => {
+    // Role, department and status are per organisation.
+    const user = { ...person, role, departmentId, status: memberStatus === "ACTIVE" && person.status === "ACTIVE" ? ("ACTIVE" as const) : ("SUSPENDED" as const) };
     const all = allocs.filter((a) => a.staffId === user.id && a.status !== "VOIDED");
     // Allocated funds only; personal spend (the staff member's own money) is reported as owed.
     const mine = all.filter((a) => a.kind !== "REIMBURSEMENT");

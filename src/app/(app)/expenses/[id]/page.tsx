@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { AlertTriangle, CheckCircle2, CircleDot, FileWarning, HelpCircle, MessageSquare, Paperclip, Pencil, Send, XCircle, Ban, Eye } from "lucide-react";
 import { DocumentGrid } from "@/components/domain/documents";
 import { UploadDocumentsButton } from "@/components/domain/document-actions";
@@ -9,6 +8,8 @@ import { Badge, ExpenseStatusBadge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Alert, DescriptionList, EmptyState, PageHeader, Progress } from "@/components/ui/misc";
+import { categoryLabel } from "@/lib/category-label";
+import { notFoundOrSwitch } from "@/lib/org-redirect";
 import { requireUser } from "@/lib/auth/current";
 import { EDITABLE_STATUSES } from "@/lib/balance";
 import { formatDate, formatDateTime } from "@/lib/dates";
@@ -38,8 +39,8 @@ const REVIEW_META: Record<ReviewAction, { label: string; icon: typeof CircleDot;
 export default async function ExpenseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
-  const d = await getExpenseDetail(user, id).catch((e) => {
-    if (e instanceof DomainError) notFound();
+  const d = await getExpenseDetail(user, id).catch(async (e) => {
+    if (e instanceof DomainError) await notFoundOrSwitch(user, "expense", id, `/expenses/${id}`);
     throw e;
   });
   const settings = await getSettings(user.organisationId);
@@ -137,7 +138,7 @@ export default async function ExpenseDetailPage({ params }: { params: Promise<{ 
                   { label: "Expense ID", value: e.reference },
                   { label: "Date", value: formatDate(e.expenseDate, "long") },
                   { label: "Staff", value: d.staff?.fullName },
-                  { label: "Category", value: d.category?.name },
+                  { label: "Category", value: categoryLabel(d.category?.name, d.expense.categoryOther) },
                   { label: "Amount", value: <span className="font-semibold">{formatMoney(e.amount)}</span> },
                   { label: "Vendor", value: e.vendor },
                   { label: "Payment method", value: e.paymentMethod },

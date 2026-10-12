@@ -1,11 +1,12 @@
 import "server-only";
-import { and, eq, ne, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { db, type Executor } from "@/db";
 import {
   DEFAULT_ORG_SETTINGS,
   allocations,
   departments,
   expenseCategories,
+  memberships,
   organisations,
   projects,
   users,
@@ -14,8 +15,8 @@ import {
 } from "@/db/schema";
 import type { CurrentUser } from "@/lib/auth/current";
 import { generatePassword, hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
-import { config, googleEnabled, isCompanyEmail } from "@/lib/config";
-import { credentialsEmail, sendEmail } from "@/lib/email";
+import { googleEnabled, isCompanyEmail } from "@/lib/config";
+import { addedToOrganisationEmail, credentialsEmail, googleInviteEmail, sendEmail } from "@/lib/email";
 import { audit, diff } from "@/lib/audit";
 import { DomainError, forbidden, notFound } from "@/lib/errors";
 import { can } from "@/lib/rbac";
@@ -36,12 +37,19 @@ export type UserInput = {
   email: string;
   phone?: string | null;
   jobTitle?: string | null;
+  /** Role in the organisations being granted (and in the active organisation when editing). */
   role: Role;
+  /** Department in the active organisation. */
   departmentId?: string | null;
   password?: string | null;
+  /** Access to the active organisation. */
   status?: "ACTIVE" | "SUSPENDED";
-  /** Email the login details (ad-hoc staff only). */
+  /** Email the login details (password users only). */
   sendCredentials?: boolean;
+  /** Organisations the person should belong to (only those the actor manages are considered). */
+  organisationIds?: string[];
+  /** Group admins only: manage every organisation. */
+  isGroupAdmin?: boolean;
 };
 
 /** Company-domain users sign in with Google and have no password. */
@@ -62,77 +70,179 @@ function validateUser(input: UserInput, requirePassword: boolean) {
   if (Object.keys(e).length) throw new DomainError("Please correct the highlighted fields.", "VALIDATION", e);
 }
 
-async function deliverCredentials(actor: CurrentUser, user: { firstName: string; email: string }, password: string) {
-  const sent = await sendEmail({ to: user.email, ...credentialsEmail({ name: user.firstName, email: user.email, password, addedBy: actor.fullName }) });
-  return sent;
+/** Organisations the actor can invite people into, and whether they can give any role there (admins) or only Staff (accountants). */
+export function manageableOrganisations(actor: CurrentUser) {
+  return actor.organisations
+    .filter((o) => can(o.role, "admin.users") || can(o.role, "users.addAdhoc"))
+    .map((o) => ({ id: o.organisationId, name: o.name, anyRole: can(o.role, "admin.users") }));
 }
 
+function canManageUsersHere(actor: CurrentUser) {
+  return can(actor.role, "admin.users") || can(actor.role, "users.addAdhoc");
+}
+
+/** Resolves the organisations to grant: always valid ones the actor manages, defaulting to the active one. */
+function resolveTargetOrgs(actor: CurrentUser, requested: string[] | undefined, role: Role) {
+  const manageable = manageableOrganisations(actor);
+  const ids = requested?.length ? [...new Set(requested)] : [actor.organisationId];
+  const orgs = ids.map((id) => manageable.find((m) => m.id === id));
+  if (orgs.some((o) => !o)) throw forbidden("You can only add people to organisations you manage.");
+  const chosen = orgs as { id: string; name: string; anyRole: boolean }[];
+  const limited = chosen.find((o) => !o.anyRole);
+  if (limited && role !== "STAFF") throw forbidden(`Accountants can only add staff to ${limited.name}. Ask an administrator for other roles.`);
+  return chosen;
+}
+
+/** Throws when removing a person's admin access would leave an organisation without an administrator. */
+async function assertKeepsAdmin(exec: Executor, organisationId: string, losingUserId: string) {
+  const others = await exec
+    .select({ count: sql<number>`count(*)::int` })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(
+      and(
+        eq(memberships.organisationId, organisationId),
+        eq(memberships.role, "ADMIN"),
+        eq(memberships.status, "ACTIVE"),
+        eq(users.status, "ACTIVE"),
+        ne(users.id, losingUserId),
+      ),
+    );
+  const groupAdmins = await exec
+    .select({ count: sql<number>`count(*)::int` })
+    .from(users)
+    .where(and(eq(users.isGroupAdmin, true), eq(users.status, "ACTIVE"), ne(users.id, losingUserId)));
+  if (Number(others[0].count) + Number(groupAdmins[0].count) === 0)
+    throw new DomainError("Every organisation must keep at least one active administrator.");
+}
+
+async function deliverCredentials(actor: CurrentUser, user: { firstName: string; email: string }, password: string, organisations?: string[]) {
+  return sendEmail({ to: user.email, ...credentialsEmail({ name: user.firstName, email: user.email, password, addedBy: actor.fullName, organisations }) });
+}
+
+export type InviteResult = {
+  user: { id: string; email: string; firstName: string };
+  google: boolean;
+  password: string | null;
+  emailed: boolean | null;
+  /** The person already had an account; they were given access to more organisations. */
+  existing: boolean;
+  organisations: string[];
+};
+
 /**
- * Admins can add anyone. Accountants can add ad-hoc staff only — people without a company
- * email, who sign in with a password that can be emailed to them.
+ * Invites someone into one or more organisations. Nobody can join without an invite: company
+ * staff get an email telling them to sign in with Google; people without a company email get
+ * a generated password (emailed and shown once). Inviting an existing user adds the
+ * organisations to their account. Accountants can invite Staff only.
  */
-export async function createUser(actor: CurrentUser, input: UserInput) {
-  const isAdmin = can(actor.role, "admin.users");
-  if (!isAdmin && !can(actor.role, "users.addAdhoc")) throw forbidden();
+export async function createUser(actor: CurrentUser, input: UserInput): Promise<InviteResult> {
+  if (!canManageUsersHere(actor)) throw forbidden();
   const email = input.email.trim().toLowerCase();
   const google = usesGoogle(email);
-  if (!isAdmin) {
-    if (input.role !== "STAFF") throw forbidden("Accountants can only add staff. Ask an administrator for other roles.");
-    if (isCompanyEmail(email))
-      throw new DomainError(`@${config.companyDomain} staff don't need to be added — they're let in automatically when they sign in with Google.`, "VALIDATION", { email: "Company email" });
+  const targets = resolveTargetOrgs(actor, input.organisationIds, input.role);
+  const departmentFor = (orgId: string) => (orgId === actor.organisationId ? input.departmentId || null : null);
+
+  const existing = await db.query.users.findFirst({ where: sql`lower(${users.email}) = ${email}` });
+  if (existing) {
+    const current = await db.select().from(memberships).where(eq(memberships.userId, existing.id));
+    const toAdd = targets.filter((t) => !current.some((m) => m.organisationId === t.id));
+    if (!toAdd.length)
+      throw new DomainError("This person already has access to the selected organisations. Use Edit to change their role.", "VALIDATION", { email: "Already a member." });
+    await db.transaction(async (tx) => {
+      await tx.insert(memberships).values(
+        toAdd.map((t) => ({ userId: existing.id, organisationId: t.id, role: input.role, departmentId: departmentFor(t.id), invitedBy: actor.id })),
+      );
+      for (const t of toAdd) {
+        await audit(tx, {
+          organisationId: t.id,
+          userId: actor.id,
+          entityType: "USER",
+          entityId: existing.id,
+          entityRef: email,
+          action: "MEMBERSHIP_ADDED",
+          summary: `${actor.fullName} added ${existing.firstName} ${existing.lastName} to ${t.name} (${input.role.toLowerCase()})`,
+          newValues: { organisation: t.name, role: input.role },
+        });
+      }
+    });
+    const names = toAdd.map((t) => t.name);
+    const emailed = (await sendEmail({ to: existing.email, ...addedToOrganisationEmail({ name: existing.firstName, addedBy: actor.fullName, organisations: names }) })).ok;
+    return { user: existing, google: !existing.passwordHash, password: null, emailed, existing: true, organisations: names };
   }
+
   if (!google && !input.password) input.password = generatePassword();
   validateUser(input, !google);
-  const exists = await db.query.users.findFirst({ where: sql`lower(${users.email}) = ${email}` });
-  if (exists) throw new DomainError("A user with that email already exists.", "VALIDATION", { email: "Already in use." });
   const passwordHash = google ? null : await hashPassword(input.password!);
+  const home = targets.find((t) => t.id === actor.organisationId) ?? targets[0];
   const user = await db.transaction(async (tx) => {
     const [user] = await tx
       .insert(users)
       .values({
-        organisationId: actor.organisationId,
+        organisationId: home.id,
         firstName: input.firstName.trim(),
         lastName: input.lastName.trim(),
         email,
         phone: input.phone?.trim() || null,
         jobTitle: input.jobTitle?.trim() || null,
         role: input.role,
-        departmentId: input.departmentId || null,
+        departmentId: departmentFor(home.id),
         passwordHash,
         passwordSetByAdmin: !google,
+        invitedAt: new Date(),
+        invitedBy: actor.id,
       })
       .returning();
-    await audit(tx, {
-      organisationId: actor.organisationId,
-      userId: actor.id,
-      entityType: "USER",
-      entityId: user.id,
-      entityRef: email,
-      action: "CREATED",
-      summary: `${actor.fullName} added ${google ? "" : "ad-hoc "}user ${user.firstName} ${user.lastName} (${input.role.toLowerCase()})`,
-      newValues: { email, role: input.role, departmentId: user.departmentId, signIn: google ? "google" : "password" },
-    });
+    await tx.insert(memberships).values(targets.map((t) => ({ userId: user.id, organisationId: t.id, role: input.role, departmentId: departmentFor(t.id), invitedBy: actor.id })));
+    for (const t of targets) {
+      await audit(tx, {
+        organisationId: t.id,
+        userId: actor.id,
+        entityType: "USER",
+        entityId: user.id,
+        entityRef: email,
+        action: "INVITED",
+        summary: `${actor.fullName} invited ${user.firstName} ${user.lastName} to ${t.name} (${input.role.toLowerCase()})`,
+        newValues: { email, role: input.role, organisations: targets.map((x) => x.name), signIn: google ? "google" : "password" },
+      });
+    }
     return user;
   });
+  const names = targets.map((t) => t.name);
   let emailed: boolean | null = null;
-  if (!google && input.sendCredentials) {
-    emailed = (await deliverCredentials(actor, user, input.password!)).ok;
-    await audit(db, { organisationId: actor.organisationId, userId: actor.id, entityType: "USER", entityId: user.id, entityRef: email, action: emailed ? "CREDENTIALS_EMAILED" : "CREDENTIALS_EMAIL_FAILED", summary: `${actor.fullName} ${emailed ? "emailed" : "could not email"} login details to ${email}` });
+  if (google) {
+    emailed = (await sendEmail({ to: email, ...googleInviteEmail({ name: user.firstName, email, addedBy: actor.fullName, organisations: names }) })).ok;
+  } else if (input.sendCredentials) {
+    emailed = (await deliverCredentials(actor, user, input.password!, names)).ok;
   }
-  return { user, google, password: google ? null : input.password!, emailed };
+  if (emailed !== null) {
+    await audit(db, { organisationId: actor.organisationId, userId: actor.id, entityType: "USER", entityId: user.id, entityRef: email, action: emailed ? "INVITE_EMAILED" : "INVITE_EMAIL_FAILED", summary: `${actor.fullName} ${emailed ? "emailed" : "could not email"} the invitation to ${email}` });
+  }
+  return { user, google, password: google ? null : input.password!, emailed, existing: false, organisations: names };
 }
 
-/** Set a fresh temporary password for an ad-hoc user and (optionally) email it. */
+/** The target's membership in the actor's active organisation (people outside it can't be managed from here). */
+async function memberHere(actor: CurrentUser, userId: string) {
+  const rows = await db
+    .select({ user: users, membership: memberships })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(and(eq(memberships.userId, userId), eq(memberships.organisationId, actor.organisationId)))
+    .limit(1);
+  if (!rows[0]) throw notFound("User not found in this organisation.");
+  return rows[0];
+}
+
+/** Set a fresh temporary password for a password user and (optionally) email it. */
 export async function resendLoginDetails(actor: CurrentUser, userId: string, opts: { email: boolean }) {
   const isAdmin = can(actor.role, "admin.users");
-  if (!isAdmin && !can(actor.role, "users.addAdhoc")) throw forbidden();
-  const target = await db.query.users.findFirst({ where: and(eq(users.id, userId), eq(users.organisationId, actor.organisationId)) });
-  if (!target) throw notFound("User not found.");
+  if (!canManageUsersHere(actor)) throw forbidden();
+  const { user: target, membership } = await memberHere(actor, userId);
   if (usesGoogle(target.email)) throw new DomainError("This person signs in with Google and has no password.");
-  if (!isAdmin && target.role !== "STAFF") throw forbidden("Accountants can only manage staff logins.");
+  if (!isAdmin && (membership.role !== "STAFF" || target.isGroupAdmin)) throw forbidden("Accountants can only manage staff logins.");
   const password = generatePassword();
   await db.update(users).set({ passwordHash: await hashPassword(password), passwordSetByAdmin: true, resetTokenHash: null }).where(eq(users.id, userId));
-  const emailed = opts.email ? (await deliverCredentials(actor, target, password)).ok : null;
+  const emailed = opts.email ? (await deliverCredentials(actor, target, password, [actor.organisation.name])).ok : null;
   await audit(db, {
     organisationId: actor.organisationId,
     userId: actor.id,
@@ -145,37 +255,76 @@ export async function resendLoginDetails(actor: CurrentUser, userId: string, opt
   return { password, emailed };
 }
 
+/** Re-sends the Google sign-in invitation to someone who hasn't signed in yet. */
+export async function resendInvite(actor: CurrentUser, userId: string) {
+  if (!canManageUsersHere(actor)) throw forbidden();
+  const { user: target, membership } = await memberHere(actor, userId);
+  if (!can(actor.role, "admin.users") && (membership.role !== "STAFF" || target.isGroupAdmin)) throw forbidden("Accountants can only manage staff.");
+  if (target.passwordHash) throw new DomainError("This person signs in with a password — issue new login details instead.");
+  const orgs = await db
+    .select({ name: organisations.name })
+    .from(memberships)
+    .innerJoin(organisations, eq(organisations.id, memberships.organisationId))
+    .where(and(eq(memberships.userId, userId), eq(memberships.status, "ACTIVE"), eq(organisations.archived, false)));
+  const r = await sendEmail({ to: target.email, ...googleInviteEmail({ name: target.firstName, email: target.email, addedBy: actor.fullName, organisations: orgs.map((o) => o.name) }) });
+  if (!r.ok) throw new DomainError(`The invitation could not be sent: ${r.error ?? "email failed"}`);
+  await audit(db, { organisationId: actor.organisationId, userId: actor.id, entityType: "USER", entityId: userId, entityRef: target.email, action: "INVITE_EMAILED", summary: `${actor.fullName} re-sent the invitation to ${target.email}` });
+}
+
+/**
+ * Edits a person's details and their access: role, department and status in the active
+ * organisation, plus which other organisations (that the actor manages) they belong to.
+ */
 export async function updateUser(actor: CurrentUser, id: string, input: UserInput) {
   requireAdmin(actor, "admin.users");
   validateUser(input, false);
-  const current = await db.query.users.findFirst({ where: and(eq(users.id, id), eq(users.organisationId, actor.organisationId)) });
-  if (!current) throw notFound("User not found.");
+  const { user: current, membership } = await memberHere(actor, id);
   const email = input.email.trim().toLowerCase();
   const clash = await db.query.users.findFirst({ where: and(sql`lower(${users.email}) = ${email}`, ne(users.id, id)) });
   if (clash) throw new DomainError("A user with that email already exists.", "VALIDATION", { email: "Already in use." });
-  if (id === actor.id && (input.role !== "ADMIN" || input.status === "SUSPENDED"))
+  const status = input.status ?? membership.status;
+  if (id === actor.id && (input.role !== "ADMIN" || status === "SUSPENDED") && !actor.isGroupAdmin)
     throw new DomainError("You can't remove your own administrator access or suspend yourself.");
-  if (current.role === "ADMIN" && (input.role !== "ADMIN" || input.status === "SUSPENDED")) {
-    const admins = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(users)
-      .where(and(eq(users.organisationId, actor.organisationId), eq(users.role, "ADMIN"), eq(users.status, "ACTIVE")));
-    if (Number(admins[0].count) <= 1) throw new DomainError("The organisation must keep at least one active administrator.");
-  }
-  const next = {
-    firstName: input.firstName.trim(),
-    lastName: input.lastName.trim(),
-    email,
-    phone: input.phone?.trim() || null,
-    jobTitle: input.jobTitle?.trim() || null,
-    role: input.role,
-    departmentId: input.departmentId || null,
-    status: input.status ?? current.status,
-  };
-  const passwordHash = input.password && !usesGoogle(email) ? await hashPassword(input.password) : undefined;
+  if (id === actor.id && input.isGroupAdmin === false && actor.isGroupAdmin)
+    throw new DomainError("You can't remove your own group administrator access.");
+
+  // Organisation access changes, limited to organisations the actor manages.
+  const manageable = manageableOrganisations(actor).filter((o) => o.anyRole && o.id !== actor.organisationId);
+  const existingMemberships = await db.select().from(memberships).where(eq(memberships.userId, id));
+  const wanted = new Set(input.organisationIds ?? existingMemberships.map((m) => m.organisationId));
+  const toAdd = input.organisationIds ? manageable.filter((o) => wanted.has(o.id) && !existingMemberships.some((m) => m.organisationId === o.id)) : [];
+  const toRemove = input.organisationIds ? existingMemberships.filter((m) => !wanted.has(m.organisationId) && manageable.some((o) => o.id === m.organisationId)) : [];
+
   await db.transaction(async (tx) => {
+    if (membership.role === "ADMIN" && (input.role !== "ADMIN" || status === "SUSPENDED")) await assertKeepsAdmin(tx, actor.organisationId, id);
+    for (const m of toRemove) if (m.role === "ADMIN") await assertKeepsAdmin(tx, m.organisationId, id);
+    if (current.isGroupAdmin && input.isGroupAdmin === false) {
+      const others = await tx.select({ count: sql<number>`count(*)::int` }).from(users).where(and(eq(users.isGroupAdmin, true), ne(users.id, id)));
+      if (Number(others[0].count) === 0) throw new DomainError("There must be at least one group administrator.");
+    }
+
+    const next = {
+      firstName: input.firstName.trim(),
+      lastName: input.lastName.trim(),
+      email,
+      phone: input.phone?.trim() || null,
+      jobTitle: input.jobTitle?.trim() || null,
+      ...(actor.isGroupAdmin && input.isGroupAdmin !== undefined ? { isGroupAdmin: input.isGroupAdmin } : {}),
+      // A person re-activated here can sign in again even if they were suspended everywhere before.
+      ...(status === "ACTIVE" ? { status: "ACTIVE" as const } : {}),
+    };
+    const passwordHash = input.password && !usesGoogle(email) ? await hashPassword(input.password) : undefined;
     await tx.update(users).set({ ...next, ...(passwordHash ? { passwordHash, passwordSetByAdmin: true } : {}) }).where(eq(users.id, id));
-    const d = diff(current as unknown as Record<string, unknown>, next);
+    const memberNext = { role: input.role, departmentId: input.departmentId || null, status };
+    await tx.update(memberships).set(memberNext).where(eq(memberships.id, membership.id));
+    if (toAdd.length) {
+      await tx.insert(memberships).values(toAdd.map((o) => ({ userId: id, organisationId: o.id, role: input.role, invitedBy: actor.id })));
+    }
+    if (toRemove.length) {
+      await tx.delete(memberships).where(inArray(memberships.id, toRemove.map((m) => m.id)));
+    }
+
+    const d = diff({ ...current, role: membership.role, departmentId: membership.departmentId, status: membership.status } as unknown as Record<string, unknown>, { ...next, ...memberNext });
     if (d.changed || passwordHash) {
       await audit(tx, {
         organisationId: actor.organisationId,
@@ -189,9 +338,19 @@ export async function updateUser(actor: CurrentUser, id: string, input: UserInpu
         newValues: { ...d.newValues, ...(passwordHash ? { password: "changed" } : {}) },
       });
     }
+    for (const o of toAdd) {
+      await audit(tx, { organisationId: o.id, userId: actor.id, entityType: "USER", entityId: id, entityRef: email, action: "MEMBERSHIP_ADDED", summary: `${actor.fullName} added ${next.firstName} ${next.lastName} to ${o.name} (${input.role.toLowerCase()})` });
+    }
+    for (const m of toRemove) {
+      const name = manageable.find((o) => o.id === m.organisationId)?.name ?? "an organisation";
+      await audit(tx, { organisationId: m.organisationId, userId: actor.id, entityType: "USER", entityId: id, entityRef: email, action: "MEMBERSHIP_REMOVED", summary: `${actor.fullName} removed ${next.firstName} ${next.lastName} from ${name}` });
+    }
   });
-  if (passwordHash && input.sendCredentials) {
-    await deliverCredentials(actor, { firstName: next.firstName, email }, input.password!);
+  if (input.password && !usesGoogle(email) && input.sendCredentials) {
+    await deliverCredentials(actor, { firstName: input.firstName.trim(), email }, input.password);
+  }
+  if (toAdd.length) {
+    await sendEmail({ to: email, ...addedToOrganisationEmail({ name: input.firstName.trim(), addedBy: actor.fullName, organisations: toAdd.map((o) => o.name) }) });
   }
 }
 
@@ -238,7 +397,7 @@ export async function keepIssuedPassword(actor: CurrentUser) {
 export async function saveCategory(
   actor: CurrentUser,
   id: string | null,
-  input: { name: string; description?: string | null; keywords?: string | null; receiptRequired: boolean; archived?: boolean },
+  input: { name: string; description?: string | null; keywords?: string | null; receiptRequired: boolean; isOther?: boolean; archived?: boolean },
 ) {
   requireAdmin(actor, "admin.config");
   if (!input.name?.trim()) throw new DomainError("Name is required.", "VALIDATION", { name: "Required." });
@@ -247,6 +406,7 @@ export async function saveCategory(
     description: input.description?.trim() || null,
     keywords: input.keywords?.trim() || null,
     receiptRequired: input.receiptRequired,
+    isOther: input.isOther ?? false,
     archived: input.archived ?? false,
   };
   await db.transaction(async (tx) => {

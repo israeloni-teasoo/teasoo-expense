@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { SettingsForm } from "@/components/forms/admin-forms";
+import { OrganisationForm } from "@/components/forms/organisation-forms";
 import { DiagnosticsButtons } from "@/components/forms/diagnostics";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -36,6 +37,16 @@ export default async function SettingsPage() {
       <Card>
         <CardBody>
           <SettingsForm name={org.name} settings={org.settings} />
+        </CardBody>
+      </Card>
+      <Card>
+        <CardHeader title="Logo" description={`Shown beside ${org.name} in the organisation menu at the top left`} />
+        <CardBody>
+          <OrganisationForm
+            logoOnly
+            groupAdmin={false}
+            org={{ id: org.id, name: org.name, currency: org.currency, archived: org.archived, logoUrl: org.logoKey ? `/api/organisations/${org.id}/logo?v=${org.updatedAt.getTime()}` : null }}
+          />
         </CardBody>
       </Card>
       <Card>

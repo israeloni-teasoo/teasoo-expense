@@ -30,6 +30,7 @@ export default async function CategoriesPage() {
               </div>
               <div className="hidden gap-1 sm:flex">
                 {c.receiptRequired ? <Badge tone="blue">Receipt required</Badge> : <Badge>Receipt optional</Badge>}
+                {c.isOther && <Badge tone="purple">Free text</Badge>}
                 {c.archived && <Badge tone="gray">Archived</Badge>}
               </div>
               <ModalButton label="Edit" size="sm" variant="ghost" icon={<Pencil className="h-3.5 w-3.5" />} title={`Edit ${c.name}`}>
