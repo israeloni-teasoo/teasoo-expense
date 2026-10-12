@@ -7,7 +7,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/misc";
 import { requirePagePermission } from "@/lib/auth/current";
 import { redirectUriFor } from "@/lib/auth/google";
-import { config, emailEnabled, googleEnabled } from "@/lib/config";
+import { config, emailEnabled, emailFromWarning, googleEnabled } from "@/lib/config";
 import { storageDriverName } from "@/lib/storage";
 import { getOrg } from "@/lib/services/org";
 
@@ -22,7 +22,12 @@ export default async function SettingsPage() {
   const redirectUri = redirectUriFor(`${proto}://${host}`);
   const status = [
     { label: "Google sign-in", ok: googleEnabled(), detail: googleEnabled() ? `@${config.companyDomain} accounts` : "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set" },
-    { label: "Email (Resend)", ok: emailEnabled(), detail: emailEnabled() ? config.email.from : "RESEND_API_KEY not set — emails are logged, not sent" },
+    {
+      label: "Email (Resend)",
+      ok: emailEnabled(),
+      detail: !emailEnabled() ? "RESEND_API_KEY not set — emails are logged, not sent" : config.email.from,
+      warning: emailFromWarning(),
+    },
     { label: "Receipt storage", ok: storageDriverName() === "supabase", detail: storageDriverName() === "supabase" ? "Supabase Storage (private bucket)" : "Local folder (development only)" },
   ];
   return (
@@ -44,6 +49,7 @@ export default async function SettingsPage() {
                   <span className="text-xs">{s.detail}</span>
                   <Badge tone={s.ok ? "green" : "amber"}>{s.ok ? "On" : "Off"}</Badge>
                 </span>
+                {"warning" in s && s.warning && <p className="w-full rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">{s.warning}</p>}
               </li>
             ))}
           </ul>

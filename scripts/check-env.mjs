@@ -25,6 +25,8 @@ if (storage === "supabase" && !(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KE
 if (!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET)) warnings.push("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set — Google sign-in is disabled");
 if (!env.BOOTSTRAP_ADMIN_EMAILS) warnings.push("BOOTSTRAP_ADMIN_EMAILS not set — nobody becomes an administrator automatically on a fresh database");
 if (!env.RESEND_API_KEY) warnings.push("RESEND_API_KEY not set — emails are logged instead of sent");
+if (env.EMAIL_FROM && !/^\s*(?:[^<>]*<\s*[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+\s*>|[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+)\s*$/.test(env.EMAIL_FROM))
+  warnings.push(`EMAIL_FROM "${env.EMAIL_FROM}" isn't a valid sender — use e.g. Teasoo Expense <notifications@expense.teasooconsulting.com>, or remove it to use that default`);
 if (!env.APP_URL && !env.VERCEL_PROJECT_PRODUCTION_URL) warnings.push("APP_URL not set — links in emails and the Google redirect use http://localhost:3000");
 
 for (const w of warnings) console.warn(`⚠  ${w}`);
