@@ -21,7 +21,14 @@ export async function sendEmail(msg: Email): Promise<{ ok: boolean; error?: stri
     if (!res.ok) {
       const body = await res.text();
       console.error(`[email] Resend ${res.status}: ${body}`);
-      return { ok: false, error: `Email provider error (${res.status}).` };
+      // Pass Resend's own explanation through (e.g. "The teasooconsulting.com domain is not verified").
+      let detail = "";
+      try {
+        detail = String((JSON.parse(body) as { message?: string }).message ?? "");
+      } catch {
+        detail = body.slice(0, 200);
+      }
+      return { ok: false, error: `Email provider error (${res.status})${detail ? `: ${detail}` : "."}` };
     }
     return { ok: true };
   } catch (e) {
