@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/cn";
+import { Spinner } from "./spinner";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "success" | "outline";
 type Size = "sm" | "md" | "lg" | "icon";
@@ -22,7 +23,7 @@ const sizes: Record<Size, string> = {
 
 export function buttonClasses(variant: Variant = "primary", size: Size = "md", className?: string) {
   return cn(
-    "inline-flex shrink-0 items-center justify-center rounded-lg font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap",
+    "inline-flex shrink-0 items-center justify-center rounded-lg font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 whitespace-nowrap [&:disabled:not([aria-busy=true])]:cursor-not-allowed [&:disabled:not([aria-busy=true])]:opacity-50",
     variants[variant],
     sizes[size],
     className,
@@ -33,9 +34,22 @@ export function Button({
   variant = "primary",
   size = "md",
   className,
+  loading,
+  disabled,
+  children,
   ...props
-}: ComponentProps<"button"> & { variant?: Variant; size?: Size }) {
-  return <button className={buttonClasses(variant, size, className)} {...props} />;
+}: ComponentProps<"button"> & { variant?: Variant; size?: Size; /** Show a spinner and block further clicks. */ loading?: boolean }) {
+  return (
+    <button
+      className={buttonClasses(variant, size, cn(loading && "cursor-wait [&>svg:not(.animate-spin)]:hidden", className))}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...props}
+    >
+      {loading && <Spinner />}
+      {children}
+    </button>
+  );
 }
 
 export function LinkButton({

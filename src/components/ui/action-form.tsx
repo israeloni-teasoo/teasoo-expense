@@ -6,6 +6,7 @@ import { AlertTriangle } from "lucide-react";
 import type { ActionResult } from "@/lib/errors";
 import { cn } from "@/lib/cn";
 import { compressFormData } from "@/lib/compress-image";
+import { startNavigationProgress } from "@/components/shell/navigation-progress";
 import { Button } from "./button";
 import { Field } from "./form";
 import { useModal } from "./modal";
@@ -13,7 +14,14 @@ import { useToast } from "./toast";
 
 export type FormAction = (prev: ActionResult<unknown> | null, formData: FormData) => Promise<ActionResult<unknown>>;
 
-const FormStateContext = createContext<{ state: ActionResult<unknown> | null; pending: boolean }>({ state: null, pending: false });
+type FormStateValue = {
+  state: ActionResult<unknown> | null;
+  pending: boolean;
+  /** "name=value" of the submit button that started the pending submission ("" for unnamed buttons). */
+  activeSubmitter: string | null;
+};
+const FormStateContext = createContext<FormStateValue>({ state: null, pending: false, activeSubmitter: null });
+const submitterKey = (el: Element | null) => (el ? `${el.getAttribute("name") ?? ""}=${el.getAttribute("value") ?? ""}` : null);
 export const useFormState = () => useContext(FormStateContext);
 
 export function useFieldError(name: string) {
@@ -44,6 +52,9 @@ export function ActionForm({
 }) {
   const [state, setState] = useState<ActionResult<unknown> | null>(null);
   const [pending, startTransition] = useTransition();
+  const [activeSubmitter, setActiveSubmitter] = useState<string | null>(null);
+  // After a successful save that redirects, keep the button spinning until the next page shows.
+  const [redirecting, setRedirecting] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const submitter = useRef<HTMLElement | null>(null);
   const acknowledged = useRef(new Set<string>());
@@ -61,13 +72,19 @@ export function ActionForm({
     if (result.message) toast(result.message);
     if (resetOnSuccess) formRef.current?.reset();
     onSuccess?.(result);
-    if (result.redirectTo) router.push(result.redirectTo);
+    if (result.redirectTo) {
+      setRedirecting(true);
+      startNavigationProgress();
+      router.push(result.redirectTo);
+      setTimeout(() => setRedirecting(false), 15000); // safety net if the page never changes
+    }
     else if (closeOnSuccess) modal?.close();
   }
 
   function submit(extra?: string) {
     const form = formRef.current;
-    if (!form) return;
+    if (!form || pending || redirecting) return;
+    setActiveSubmitter(extra ? `confirm=${extra}` : submitterKey(submitter.current));
     const raw = submitter.current ? new FormData(form, submitter.current) : new FormData(form);
     if (extra) acknowledged.current.add(extra);
     for (const k of acknowledged.current) raw.set(`confirm_${k}`, "1");
@@ -86,7 +103,7 @@ export function ActionForm({
   const error = state && !state.ok && !warning ? state.error : undefined;
 
   return (
-    <FormStateContext.Provider value={{ state, pending }}>
+    <FormStateContext.Provider value={{ state, pending: pending || redirecting, activeSubmitter }}>
       <form
         ref={formRef}
         className={cn("space-y-4", className)}
@@ -113,7 +130,7 @@ export function ActionForm({
                 <p className="font-semibold">{warning.kind === "DUPLICATE" ? "Possible duplicate" : "Over budget"}</p>
                 <p className="mt-1">{warning.message}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button type="button" size="sm" variant="primary" disabled={pending} onClick={() => submit(warning.kind)}>
+                  <Button type="button" size="sm" variant="primary" loading={pending} onClick={() => submit(warning.kind)}>
                     Yes, continue
                   </Button>
                   <Button type="button" size="sm" variant="secondary" onClick={() => {
@@ -173,10 +190,12 @@ export function SubmitButton({
   name?: string;
   value?: string;
 }) {
-  const { pending } = useFormState();
+  const { pending, activeSubmitter } = useFormState();
+  // Only the button that was clicked shows the spinner; the others are just blocked.
+  const mine = pending && (activeSubmitter === null || activeSubmitter === `${name ?? ""}=${value ?? ""}`);
   return (
-    <Button type="submit" variant={variant} size={size} disabled={pending} className={className} name={name} value={value}>
-      {pending && pendingText ? pendingText : children}
+    <Button type="submit" variant={variant} size={size} disabled={pending} loading={mine} className={className} name={name} value={value}>
+      {mine && pendingText ? pendingText : children}
     </Button>
   );
 }

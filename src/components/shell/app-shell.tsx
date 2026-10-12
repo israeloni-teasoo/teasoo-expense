@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   ArrowLeftRight,
   BarChart3,
@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Logo } from "./logo";
+import { NavigationProgress } from "./navigation-progress";
+import { PendingButton } from "@/components/ui/pending-button";
 
 const ICONS = {
   home: Home,
@@ -134,9 +136,9 @@ function SidebarContent({
           </span>
         </Link>
         <form action={logoutAction}>
-          <button className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-brand-200 hover:bg-brand-800/60 hover:text-white">
+          <PendingButton className="mt-1 w-full !justify-start gap-3 rounded-lg px-3 py-2 text-sm text-brand-200 hover:bg-brand-800/60 hover:text-white">
             <LogOut className="h-[18px] w-[18px]" /> Sign out
-          </button>
+          </PendingButton>
         </form>
       </div>
     </div>
@@ -172,6 +174,9 @@ export function AppShell({
 
   return (
     <div className="min-h-dvh">
+      <Suspense fallback={null}>
+        <NavigationProgress />
+      </Suspense>
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">
         <SidebarContent sections={sections} user={user} pathname={pathname} logoutAction={logoutAction} />

@@ -517,8 +517,8 @@ function Steps({
       {/* Navigation */}
       <div className="sticky bottom-16 z-10 -mx-4 mt-6 flex items-center gap-2 border-t border-gray-200 bg-gray-50/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 lg:bottom-0">
         {step > 0 && (
-          <Button type="button" variant="secondary" onClick={() => setStep((s) => s - 1)}>
-            <ChevronLeft className="h-4 w-4" /> Back
+          <Button type="button" variant="secondary" onClick={() => setStep((s) => s - 1)} className="px-3 sm:px-4" aria-label="Back">
+            <ChevronLeft className="h-4 w-4" /> <span className="hidden sm:inline">Back</span>
           </Button>
         )}
         <div className="ml-auto flex gap-2">

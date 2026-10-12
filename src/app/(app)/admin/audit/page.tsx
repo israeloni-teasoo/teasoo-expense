@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Form from "next/form";
 import Link from "next/link";
 import { and, desc, eq, gte, ilike, lte, or, sql, type SQL } from "drizzle-orm";
 import { Search } from "lucide-react";
@@ -45,7 +46,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
   return (
     <div>
       <PageHeader title="Audit log" description="Every important action — who, what, when, and the before/after values. Records are append-only." />
-      <form method="get" className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto_auto]">
+      <Form action="/admin/audit" className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <Input name="q" defaultValue={sp.q} placeholder="Search actions or references…" className="pl-9" aria-label="Search audit log" />
@@ -61,7 +62,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
         <Input type="date" name="from" defaultValue={sp.from} aria-label="From" />
         <Input type="date" name="to" defaultValue={sp.to} aria-label="To" />
         <Button type="submit" variant="secondary">Filter</Button>
-      </form>
+      </Form>
       <Card className="overflow-hidden">
         {rows.length ? (
           <>

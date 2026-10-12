@@ -108,7 +108,9 @@ if (process.env.SMOKE_OCR !== "0") {
 
 // Staff cannot access finance pages or other people's data
 const r = await staff.page.goto(BASE + "/allocations");
-ok(staff.page.url().includes("/dashboard?denied=1"), "staff redirected away from finance-only page");
+// Pages stream behind a loading skeleton, so the permission redirect arrives just after the response starts.
+const redirected = await staff.page.waitForURL(/\/dashboard\?denied=1/, { timeout: 10000 }).then(() => true, () => false);
+ok(redirected && (await staff.page.getByText("Money disbursed to staff").count()) === 0, "staff redirected away from finance-only page (no finance data shown)");
 const apiRes = await staff.ctx.request.get(BASE + "/api/reports?report=staff");
 ok(apiRes.status() === 403, "staff blocked from organisation reports API");
 

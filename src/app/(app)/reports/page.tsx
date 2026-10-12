@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Form from "next/form";
 import Link from "next/link";
 import { RankedBars } from "@/components/charts/charts";
 import { ExportMenu } from "@/components/domain/export-menu";
@@ -53,7 +54,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         }
       />
 
-      <form method="get" className="mb-5 grid gap-2 rounded-xl border border-gray-200 bg-white p-3 sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
+      <Form action="/reports" className="mb-5 grid gap-2 rounded-xl border border-gray-200 bg-white p-3 sm:grid-cols-[auto_auto_auto_auto] sm:items-center">
         <input type="hidden" name="report" value={report} />
         <Select name="period" defaultValue={period} aria-label="Reporting period">
           {PERIODS.map((p) => (
@@ -67,7 +68,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           {range.label}
           {period !== "custom" && " · pick “Custom range” to use the dates"}
         </p>
-      </form>
+      </Form>
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard tone="brand" label="Spending in period" value={formatMoney(totalSpend)} hint="Approved + pending" />

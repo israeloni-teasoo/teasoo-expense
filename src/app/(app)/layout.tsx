@@ -11,6 +11,7 @@ import { runSweep } from "@/lib/services/sweep";
 import { logoutAction } from "@/app/actions/auth";
 import { keepPasswordAction } from "@/app/actions/account";
 import Link from "next/link";
+import { PendingButton } from "@/components/ui/pending-button";
 
 export const dynamic = "force-dynamic";
 
@@ -149,7 +150,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               Change password
             </Link>
             <form action={keepPasswordAction}>
-              <button className="rounded-lg px-3 py-1.5 text-xs font-semibold text-blue-800 ring-1 ring-blue-300 hover:bg-blue-100">Keep it</button>
+              <PendingButton className="rounded-lg px-3 py-1.5 text-xs font-semibold text-blue-800 ring-1 ring-blue-300 hover:bg-blue-100">Keep it</PendingButton>
             </form>
           </div>
         </div>

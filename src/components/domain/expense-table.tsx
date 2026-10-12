@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCheck, Download, Paperclip } from "lucide-react";
 import { ExpenseStatusBadge } from "@/components/ui/badge";
 import { ActionForm, SubmitButton } from "@/components/ui/action-form";
 import { buttonClasses } from "@/components/ui/button";
+import { DownloadLink } from "@/components/ui/download-link";
 import { cn } from "@/lib/cn";
 import { formatDate } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
@@ -83,15 +84,15 @@ export function ExpenseTable({
                 </SubmitButton>
               </ActionForm>
             )}
-            <a href={exportHref("xlsx")} className={buttonClasses("secondary", "sm")}>
+            <DownloadLink href={exportHref("xlsx")} className={buttonClasses("secondary", "sm")}>
               <Download className="h-4 w-4" /> Excel
-            </a>
-            <a href={exportHref("csv")} className={buttonClasses("secondary", "sm")}>
+            </DownloadLink>
+            <DownloadLink href={exportHref("csv")} className={buttonClasses("secondary", "sm")}>
               CSV
-            </a>
-            <a href={exportHref("pdf")} className={buttonClasses("secondary", "sm")}>
+            </DownloadLink>
+            <DownloadLink href={exportHref("pdf")} className={buttonClasses("secondary", "sm")}>
               PDF
-            </a>
+            </DownloadLink>
             <button className={buttonClasses("ghost", "sm")} onClick={() => setSelected(new Set())}>
               Clear
             </button>

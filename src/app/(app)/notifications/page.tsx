@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Bell, CheckCheck } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { buttonClasses } from "@/components/ui/button";
+import { PendingButton } from "@/components/ui/pending-button";
 import { Card } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/ui/misc";
 import { requireUser } from "@/lib/auth/current";
@@ -24,9 +25,9 @@ export default async function NotificationsPage({ searchParams }: { searchParams
         actions={
           unread > 0 ? (
             <form action={markReadAction}>
-              <Button variant="secondary" size="sm">
+              <PendingButton className={buttonClasses("secondary", "sm")}>
                 <CheckCheck className="h-4 w-4" /> Mark all as read
-              </Button>
+              </PendingButton>
             </form>
           ) : undefined
         }
@@ -53,7 +54,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                 {!n.readAt && (
                   <form action={markReadAction}>
                     <input type="hidden" name="id" value={n.id} />
-                    <button className="rounded px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100">Mark read</button>
+                    <PendingButton className="rounded px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100">Mark read</PendingButton>
                   </form>
                 )}
               </li>
