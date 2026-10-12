@@ -19,7 +19,8 @@ export const config = {
   },
   email: {
     resendApiKey: process.env.RESEND_API_KEY ?? "",
-    from: process.env.EMAIL_FROM ?? "Teasoo Expense <notifications@teasooconsulting.com>",
+    // Must be an address on the domain verified in Resend (expense.teasooconsulting.com).
+    from: process.env.EMAIL_FROM || "Teasoo Expense <notifications@expense.teasooconsulting.com>",
   },
   /** Vercel rejects request bodies over 4.5 MB, so uploads are capped below that there. */
   platformUploadCapMb: process.env.VERCEL ? 4 : 25,
