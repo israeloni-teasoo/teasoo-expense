@@ -1,0 +1,439 @@
+import { sql } from "drizzle-orm";
+import {
+  bigint,
+  boolean,
+  date,
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+/**
+ * All monetary values are stored as integers in the smallest currency unit
+ * (kobo for NGN). They are never represented as floating-point naira.
+ */
+const money = (name: string) => bigint(name, { mode: "number" });
+
+const timestamps = {
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+};
+
+export const roleEnum = pgEnum("role", ["STAFF", "ACCOUNTANT", "ADMIN", "MANAGEMENT"]);
+export const userStatusEnum = pgEnum("user_status", ["ACTIVE", "SUSPENDED"]);
+export const allocationKindEnum = pgEnum("allocation_kind", ["ADVANCE", "REIMBURSEMENT"]);
+export const allocationStatusEnum = pgEnum("allocation_status", [
+  "ACTIVE",
+  "RECONCILED",
+  "ARCHIVED",
+  "VOIDED",
+]);
+export const adjustmentTypeEnum = pgEnum("adjustment_type", [
+  "ADDITIONAL_FUNDING",
+  "REIMBURSEMENT",
+  "CORRECTION",
+  "TRANSFER",
+]);
+export const expenseStatusEnum = pgEnum("expense_status", [
+  "DRAFT",
+  "SUBMITTED",
+  "UNDER_REVIEW",
+  "NEEDS_CLARIFICATION",
+  "APPROVED",
+  "REJECTED",
+  "RECONCILED",
+  "VOIDED",
+]);
+export const reviewActionEnum = pgEnum("review_action", [
+  "SUBMITTED",
+  "RESUBMITTED",
+  "UNDER_REVIEW",
+  "APPROVED",
+  "REJECTED",
+  "REQUEST_CLARIFICATION",
+  "COMMENT",
+  "VOIDED",
+]);
+export const documentKindEnum = pgEnum("document_kind", [
+  "RECEIPT",
+  "SUPPORTING",
+  "TRANSFER_RECEIPT",
+  "RETURN_EVIDENCE",
+  "AUTHORIZATION",
+]);
+export const claimTypeEnum = pgEnum("claim_type", ["ADDITIONAL_FUNDS", "REIMBURSEMENT"]);
+export const claimStatusEnum = pgEnum("claim_status", [
+  "SUBMITTED",
+  "RECOMMENDED",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+]);
+
+export type Role = (typeof roleEnum.enumValues)[number];
+export type AllocationStatus = (typeof allocationStatusEnum.enumValues)[number];
+export type AllocationKind = (typeof allocationKindEnum.enumValues)[number];
+export type AdjustmentType = (typeof adjustmentTypeEnum.enumValues)[number];
+export type ExpenseStatus = (typeof expenseStatusEnum.enumValues)[number];
+export type ReviewAction = (typeof reviewActionEnum.enumValues)[number];
+export type DocumentKind = (typeof documentKindEnum.enumValues)[number];
+export type ClaimType = (typeof claimTypeEnum.enumValues)[number];
+export type ClaimStatus = (typeof claimStatusEnum.enumValues)[number];
+
+export type OrgSettings = {
+  /** Block expenses that exceed the available balance instead of flagging them as over budget. */
+  blockOverspend: boolean;
+  /** Warn the user when a similar expense already exists. */
+  duplicateDetection: boolean;
+  /** Reject expense dates in the future. */
+  blockFutureDates: boolean;
+  /** Require at least one receipt before an expense can be submitted. */
+  requireReceipt: boolean;
+  /** Maximum upload size in megabytes. */
+  maxUploadMb: number;
+  /** Notify when an allocation's utilisation crosses this percentage. */
+  nearDepletionPercent: number;
+  /** Expenses this many times above the 90-day category average are flagged as unusual. */
+  unusualMultiplier: number;
+};
+
+export const DEFAULT_ORG_SETTINGS: OrgSettings = {
+  blockOverspend: false,
+  duplicateDetection: true,
+  blockFutureDates: true,
+  requireReceipt: true,
+  maxUploadMb: 10,
+  nearDepletionPercent: 80,
+  unusualMultiplier: 3,
+};
+
+export const organisations = pgTable("organisations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  currency: text("currency").notNull().default("NGN"),
+  settings: jsonb("settings").$type<OrgSettings>().notNull().default(DEFAULT_ORG_SETTINGS),
+  lastSweepAt: timestamp("last_sweep_at", { withTimezone: true }),
+  ...timestamps,
+});
+
+export const departments = pgTable("departments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organisationId: uuid("organisation_id")
+    .notNull()
+    .references(() => organisations.id),
+  name: text("name").notNull(),
+  code: text("code"),
+  archived: boolean("archived").notNull().default(false),
+  ...timestamps,
+});
+
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    departmentId: uuid("department_id").references(() => departments.id),
+    role: roleEnum("role").notNull().default("STAFF"),
+    firstName: text("first_name").notNull(),
+    lastName: text("last_name").notNull(),
+    email: text("email").notNull(),
+    phone: text("phone"),
+    jobTitle: text("job_title"),
+    passwordHash: text("password_hash").notNull(),
+    status: userStatusEnum("status").notNull().default("ACTIVE"),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    resetTokenHash: text("reset_token_hash"),
+    resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("users_email_idx").on(sql`lower(${t.email})`)],
+);
+
+export const projects = pgTable("projects", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organisationId: uuid("organisation_id")
+    .notNull()
+    .references(() => organisations.id),
+  departmentId: uuid("department_id").references(() => departments.id),
+  name: text("name").notNull(),
+  code: text("code"),
+  description: text("description"),
+  budget: money("budget"),
+  startDate: date("start_date"),
+  endDate: date("end_date"),
+  archived: boolean("archived").notNull().default(false),
+  ...timestamps,
+});
+
+export const expenseCategories = pgTable("expense_categories", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organisationId: uuid("organisation_id")
+    .notNull()
+    .references(() => organisations.id),
+  name: text("name").notNull(),
+  description: text("description"),
+  /** Comma-separated keywords used for smart category suggestions. */
+  keywords: text("keywords"),
+  receiptRequired: boolean("receipt_required").notNull().default(true),
+  archived: boolean("archived").notNull().default(false),
+  ...timestamps,
+});
+
+export const allocations = pgTable(
+  "allocations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    reference: text("reference").notNull().unique(),
+    kind: allocationKindEnum("kind").notNull().default("ADVANCE"),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => users.id),
+    departmentId: uuid("department_id").references(() => departments.id),
+    projectId: uuid("project_id").references(() => projects.id),
+    purpose: text("purpose").notNull(),
+    initialAmount: money("initial_amount").notNull(),
+    currency: text("currency").notNull().default("NGN"),
+    dateReceived: date("date_received").notNull(),
+    expectedCompletionDate: date("expected_completion_date"),
+    status: allocationStatusEnum("status").notNull().default("ACTIVE"),
+    transferReference: text("transfer_reference"),
+    fundingSource: text("funding_source"),
+    approvingOfficer: text("approving_officer"),
+    notes: text("notes"),
+    voidReason: text("void_reason"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [index("allocations_staff_idx").on(t.staffId), index("allocations_status_idx").on(t.status)],
+);
+
+export const allocationAdjustments = pgTable("allocation_adjustments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  allocationId: uuid("allocation_id")
+    .notNull()
+    .references(() => allocations.id),
+  type: adjustmentTypeEnum("type").notNull(),
+  /** Signed amount in kobo. Positive adds funds, negative removes. */
+  amount: money("amount").notNull(),
+  reason: text("reason").notNull(),
+  reference: text("reference"),
+  claimId: uuid("claim_id"),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const expenses = pgTable(
+  "expenses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    reference: text("reference").notNull().unique(),
+    allocationId: uuid("allocation_id")
+      .notNull()
+      .references(() => allocations.id),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => users.id),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => expenseCategories.id),
+    projectId: uuid("project_id").references(() => projects.id),
+    departmentId: uuid("department_id").references(() => departments.id),
+    expenseDate: date("expense_date").notNull(),
+    amount: money("amount").notNull(),
+    currency: text("currency").notNull().default("NGN"),
+    vendor: text("vendor"),
+    description: text("description").notNull(),
+    paymentMethod: text("payment_method"),
+    paymentReference: text("payment_reference"),
+    notes: text("notes"),
+    status: expenseStatusEnum("status").notNull().default("DRAFT"),
+    overBudget: boolean("over_budget").notNull().default(false),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedBy: uuid("reviewed_by").references(() => users.id),
+    voidReason: text("void_reason"),
+    ...timestamps,
+  },
+  (t) => [
+    index("expenses_allocation_idx").on(t.allocationId),
+    index("expenses_staff_idx").on(t.staffId),
+    index("expenses_status_idx").on(t.status),
+    index("expenses_date_idx").on(t.expenseDate),
+  ],
+);
+
+export const fundReturns = pgTable("fund_returns", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  allocationId: uuid("allocation_id")
+    .notNull()
+    .references(() => allocations.id),
+  amount: money("amount").notNull(),
+  returnDate: date("return_date").notNull(),
+  paymentMethod: text("payment_method"),
+  reference: text("reference"),
+  notes: text("notes"),
+  recordedBy: uuid("recorded_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const claims = pgTable("claims", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reference: text("reference").notNull().unique(),
+  allocationId: uuid("allocation_id")
+    .notNull()
+    .references(() => allocations.id),
+  staffId: uuid("staff_id")
+    .notNull()
+    .references(() => users.id),
+  type: claimTypeEnum("type").notNull(),
+  amount: money("amount").notNull(),
+  reason: text("reason").notNull(),
+  authorizedBy: text("authorized_by"),
+  status: claimStatusEnum("status").notNull().default("SUBMITTED"),
+  reviewedBy: uuid("reviewed_by").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reviewComment: text("review_comment"),
+  decidedBy: uuid("decided_by").references(() => users.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionComment: text("decision_comment"),
+  ...timestamps,
+});
+
+export const documents = pgTable(
+  "documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    kind: documentKindEnum("kind").notNull(),
+    expenseId: uuid("expense_id").references(() => expenses.id),
+    allocationId: uuid("allocation_id").references(() => allocations.id),
+    fundReturnId: uuid("fund_return_id").references(() => fundReturns.id),
+    claimId: uuid("claim_id").references(() => claims.id),
+    fileName: text("file_name").notNull(),
+    fileType: text("file_type").notNull(),
+    fileSize: integer("file_size").notNull(),
+    storageKey: text("storage_key").notNull(),
+    uploadedBy: uuid("uploaded_by")
+      .notNull()
+      .references(() => users.id),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: uuid("deleted_by").references(() => users.id),
+  },
+  (t) => [index("documents_expense_idx").on(t.expenseId), index("documents_allocation_idx").on(t.allocationId)],
+);
+
+export const expenseReviews = pgTable("expense_reviews", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  expenseId: uuid("expense_id")
+    .notNull()
+    .references(() => expenses.id),
+  reviewerId: uuid("reviewer_id")
+    .notNull()
+    .references(() => users.id),
+  action: reviewActionEnum("action").notNull(),
+  comment: text("comment"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const reconciliations = pgTable("reconciliations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  allocationId: uuid("allocation_id")
+    .notNull()
+    .references(() => allocations.id),
+  totalFunded: money("total_funded").notNull(),
+  approvedExpenses: money("approved_expenses").notNull(),
+  amountReturned: money("amount_returned").notNull(),
+  adjustments: money("adjustments").notNull(),
+  finalBalance: money("final_balance").notNull(),
+  status: text("status").notNull().default("COMPLETED"),
+  notes: text("notes"),
+  reconciledBy: uuid("reconciled_by")
+    .notNull()
+    .references(() => users.id),
+  reconciledAt: timestamp("reconciled_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    link: text("link"),
+    dedupeKey: text("dedupe_key"),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("notifications_user_idx").on(t.userId, t.readAt)],
+);
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    userId: uuid("user_id").references(() => users.id),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id"),
+    entityRef: text("entity_ref"),
+    /** Allocation the event relates to, so allocation timelines can be built from the log. */
+    allocationId: uuid("allocation_id"),
+    action: text("action").notNull(),
+    summary: text("summary").notNull(),
+    oldValues: jsonb("old_values"),
+    newValues: jsonb("new_values"),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("audit_entity_idx").on(t.entityType, t.entityId),
+    index("audit_allocation_idx").on(t.allocationId),
+    index("audit_created_idx").on(t.createdAt),
+  ],
+);
+
+/** Sequential, human-readable reference numbers (AL-2026-00124, EXP-2026-00982). */
+export const counters = pgTable("counters", {
+  key: text("key").primaryKey(),
+  value: integer("value").notNull().default(0),
+});
+
+export type User = typeof users.$inferSelect;
+export type Allocation = typeof allocations.$inferSelect;
+export type Expense = typeof expenses.$inferSelect;
+export type DocumentRow = typeof documents.$inferSelect;
+export type Claim = typeof claims.$inferSelect;
+export type Category = typeof expenseCategories.$inferSelect;
+export type Project = typeof projects.$inferSelect;
+export type Department = typeof departments.$inferSelect;
