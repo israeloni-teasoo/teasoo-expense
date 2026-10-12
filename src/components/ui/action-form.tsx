@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import type { ActionResult } from "@/lib/errors";
 import { cn } from "@/lib/cn";
+import { compressFormData } from "@/lib/compress-image";
 import { Button } from "./button";
 import { Field } from "./form";
 import { useModal } from "./modal";
@@ -31,12 +32,15 @@ export function ActionForm({
   className,
   resetOnSuccess,
   onSuccess,
+  closeOnSuccess = true,
   ...rest
 }: Omit<ComponentProps<"form">, "action" | "onSubmit"> & {
   action: FormAction;
   children: ReactNode;
   resetOnSuccess?: boolean;
   onSuccess?: (result: ActionResult<unknown>) => void;
+  /** Close the surrounding modal after success (default). */
+  closeOnSuccess?: boolean;
 }) {
   const [state, setState] = useState<ActionResult<unknown> | null>(null);
   const [pending, startTransition] = useTransition();
@@ -58,17 +62,18 @@ export function ActionForm({
     if (resetOnSuccess) formRef.current?.reset();
     onSuccess?.(result);
     if (result.redirectTo) router.push(result.redirectTo);
-    else modal?.close();
+    else if (closeOnSuccess) modal?.close();
   }
 
   function submit(extra?: string) {
     const form = formRef.current;
     if (!form) return;
-    const fd = submitter.current ? new FormData(form, submitter.current) : new FormData(form);
+    const raw = submitter.current ? new FormData(form, submitter.current) : new FormData(form);
     if (extra) acknowledged.current.add(extra);
-    for (const k of acknowledged.current) fd.set(`confirm_${k}`, "1");
+    for (const k of acknowledged.current) raw.set(`confirm_${k}`, "1");
     startTransition(async () => {
       try {
+        const fd = await compressFormData(raw);
         handle(await action(state, fd));
       } catch (e) {
         console.error(e);

@@ -9,6 +9,8 @@ import { getOrg } from "@/lib/services/org";
 import { unreadCount } from "@/lib/services/notifications";
 import { runSweep } from "@/lib/services/sweep";
 import { logoutAction } from "@/app/actions/auth";
+import { keepPasswordAction } from "@/app/actions/account";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -90,12 +92,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         ],
       });
     }
-    if (can(user.role, "admin.users") || can(user.role, "audit.view")) {
+    if (can(user.role, "admin.users") || can(user.role, "users.addAdhoc") || can(user.role, "audit.view")) {
       const admin: NavItem[] = [];
-      if (can(user.role, "admin.users")) {
-        admin.push({ href: "/admin/users", label: "Users", icon: "users" });
-        admin.push({ href: "/admin/roles", label: "Roles & permissions", icon: "shield" });
-      }
+      if (can(user.role, "admin.users") || can(user.role, "users.addAdhoc")) admin.push({ href: "/admin/users", label: "Users", icon: "users" });
+      if (can(user.role, "admin.users")) admin.push({ href: "/admin/roles", label: "Roles & permissions", icon: "shield" });
       if (can(user.role, "admin.config")) {
         admin.push({ href: "/admin/categories", label: "Categories", icon: "tags" });
         admin.push({ href: "/admin/departments", label: "Departments", icon: "building" });
@@ -139,6 +139,21 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       orgName={org.name}
       logoutAction={logoutAction}
     >
+      {user.passwordSetByAdmin && user.hasPassword && (
+        <div className="mb-5 flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            <span className="font-semibold">You&apos;re using a password that was set for you.</span> You can keep it or choose your own.
+          </p>
+          <div className="flex shrink-0 gap-2">
+            <Link href="/profile#password" className="rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800">
+              Change password
+            </Link>
+            <form action={keepPasswordAction}>
+              <button className="rounded-lg px-3 py-1.5 text-xs font-semibold text-blue-800 ring-1 ring-blue-300 hover:bg-blue-100">Keep it</button>
+            </form>
+          </div>
+        </div>
+      )}
       {children}
     </AppShell>
   );

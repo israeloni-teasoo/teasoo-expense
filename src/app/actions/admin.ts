@@ -3,31 +3,57 @@
 import { revalidatePath } from "next/cache";
 import { requireActor } from "@/lib/auth/current";
 import { type ActionResult, toActionError } from "@/lib/errors";
-import { createUser, saveCategory, saveDepartment, saveProject, saveSettings, updateUser } from "@/lib/services/admin";
+import { createUser, resendLoginDetails, saveCategory, saveDepartment, saveProject, saveSettings, updateUser } from "@/lib/services/admin";
 import type { Role } from "@/db/schema";
 import { bool, money, opt, str } from "./_helpers";
 
 type Prev = ActionResult<unknown> | null;
 
-export async function saveUserAction(_: Prev, fd: FormData): Promise<ActionResult> {
+export type IssuedCredentials = { email: string; password: string | null; emailed: boolean | null; google: boolean };
+
+export async function saveUserAction(_: Prev, fd: FormData): Promise<ActionResult<IssuedCredentials>> {
   try {
-    const actor = await requireActor("admin.users");
     const id = opt(fd, "userId");
+    const actor = await requireActor(id ? "admin.users" : undefined);
     const input = {
       firstName: str(fd, "firstName"),
       lastName: str(fd, "lastName"),
       email: str(fd, "email"),
       phone: opt(fd, "phone"),
       jobTitle: opt(fd, "jobTitle"),
-      role: str(fd, "role") as Role,
+      role: (str(fd, "role") || "STAFF") as Role,
       departmentId: opt(fd, "departmentId"),
       password: opt(fd, "password"),
       status: (str(fd, "status") || "ACTIVE") as "ACTIVE" | "SUSPENDED",
+      sendCredentials: bool(fd, "sendCredentials"),
     };
-    if (id) await updateUser(actor, id, input);
-    else await createUser(actor, input);
+    if (id) {
+      await updateUser(actor, id, input);
+      revalidatePath("/admin/users");
+      return { ok: true, message: "User updated." };
+    }
+    const r = await createUser(actor, input);
     revalidatePath("/admin/users");
-    return { ok: true, message: id ? "User updated." : "User created. Share their sign-in details securely." };
+    revalidatePath("/staff");
+    return {
+      ok: true,
+      message: r.google ? "User added. They sign in with Google." : r.emailed ? `Login details emailed to ${r.user.email}.` : "User added.",
+      data: { email: r.user.email, password: r.password, emailed: r.emailed, google: r.google },
+    };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function resendLoginAction(_: Prev, fd: FormData): Promise<ActionResult<IssuedCredentials>> {
+  try {
+    const actor = await requireActor();
+    const r = await resendLoginDetails(actor, str(fd, "userId"), { email: bool(fd, "sendCredentials") });
+    return {
+      ok: true,
+      message: r.emailed ? "New login details emailed." : "New password issued.",
+      data: { email: str(fd, "email"), password: r.password, emailed: r.emailed, google: false },
+    };
   } catch (e) {
     return toActionError(e);
   }

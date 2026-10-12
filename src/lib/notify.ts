@@ -1,7 +1,10 @@
 import "server-only";
+import { after } from "next/server";
 import { and, eq, inArray, ne } from "drizzle-orm";
-import type { Executor } from "@/db";
+import { db, type Executor } from "@/db";
 import { notifications, users, type Role } from "@/db/schema";
+import { emailEnabled } from "./config";
+import { notificationEmail, sendEmail } from "./email";
 
 export type NotificationInput = {
   type: string;
@@ -24,16 +27,43 @@ export async function notifyUsers(exec: Executor, userIds: string[], n: Notifica
     targets = unique.filter((id) => !seen.has(id));
   }
   if (!targets.length) return;
-  await exec.insert(notifications).values(
-    targets.map((userId) => ({
-      userId,
-      type: n.type,
-      title: n.title,
-      body: n.body ?? null,
-      link: n.link ?? null,
-      dedupeKey: n.dedupeKey ?? null,
-    })),
-  );
+  const rows = await exec
+    .insert(notifications)
+    .values(
+      targets.map((userId) => ({
+        userId,
+        type: n.type,
+        title: n.title,
+        body: n.body ?? null,
+        link: n.link ?? null,
+        dedupeKey: n.dedupeKey ?? null,
+      })),
+    )
+    .returning({ id: notifications.id });
+  scheduleEmails(rows.map((r) => r.id));
+}
+
+/**
+ * Emails are sent after the response, and only for notifications whose row exists by then —
+ * so a rolled-back transaction never produces an email.
+ */
+function scheduleEmails(ids: string[]) {
+  if (!ids.length || !emailEnabled()) return;
+  try {
+    after(async () => {
+      const rows = await db
+        .select({ title: notifications.title, body: notifications.body, link: notifications.link, email: users.email, wants: users.emailNotifications, status: users.status })
+        .from(notifications)
+        .innerJoin(users, eq(users.id, notifications.userId))
+        .where(inArray(notifications.id, ids));
+      for (const r of rows) {
+        if (!r.wants || r.status !== "ACTIVE") continue;
+        await sendEmail({ to: r.email, ...notificationEmail(r) });
+      }
+    });
+  } catch {
+    // Outside a request scope (e.g. scripts) there is nothing to schedule against.
+  }
 }
 
 /** Notify every active user with one of the given roles (e.g. all accountants), optionally excluding the actor. */

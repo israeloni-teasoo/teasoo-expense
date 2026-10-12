@@ -8,9 +8,11 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { jsPDF } from "jspdf";
 import { Pool } from "pg";
+import { poolConfig } from "./pool-config";
+import { DEFAULT_CATEGORIES, DEFAULT_DEPARTMENTS } from "./defaults";
 import * as s from "./schema";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool(poolConfig(process.env.DIRECT_URL || process.env.DATABASE_URL, 2));
 const db = drizzle(pool, { schema: s });
 
 const N = (naira: number) => Math.round(naira * 100);
@@ -62,33 +64,16 @@ async function main() {
   const [org] = await db.insert(s.organisations).values({ name: "Teasoo Consulting", currency: "NGN" }).returning();
   const O = org.id;
 
-  const deptNames = ["Finance", "Operations", "IT", "Marketing", "HR", "Administration"];
+  const deptNames = DEFAULT_DEPARTMENTS;
   const depts = await db
     .insert(s.departments)
     .values(deptNames.map((name) => ({ organisationId: O, name, code: name.slice(0, 3).toUpperCase() })))
     .returning();
   const dept = (name: string) => depts.find((d) => d.name === name)!.id;
 
-  const catDefs: [string, string, boolean?][] = [
-    ["Transportation", "transport,taxi,uber,bolt,fuel,bus,flight,fare,logistics van"],
-    ["Accommodation", "hotel,lodging,airbnb,accommodation,room"],
-    ["Meals", "lunch,dinner,breakfast,food,meal,catering,refreshment"],
-    ["Office Supplies", "stationery,paper,pens,toner,ink,supplies,office"],
-    ["Software", "subscription,adobe,canva,license,saas,software,microsoft,google workspace,zoom"],
-    ["Internet", "internet,wifi,data,bandwidth,isp,router"],
-    ["Printing", "printing,print,banner,flyer,photocopy,branding"],
-    ["Logistics", "delivery,courier,dispatch,haulage,logistics"],
-    ["Events", "venue,event,conference,hall,decoration,decor"],
-    ["Marketing", "advert,ads,marketing,promotion,campaign,social media"],
-    ["Equipment", "laptop,monitor,equipment,chair,projector,hardware"],
-    ["Repairs", "repair,maintenance,fix,servicing"],
-    ["Professional Services", "consultant,legal,audit,professional,contractor"],
-    ["Utilities", "electricity,diesel,water,utility,nepa,generator"],
-    ["Miscellaneous", "misc,other,sundry", false],
-  ];
   const cats = await db
     .insert(s.expenseCategories)
-    .values(catDefs.map(([name, keywords, receiptRequired]) => ({ organisationId: O, name, keywords, receiptRequired: receiptRequired ?? true })))
+    .values(DEFAULT_CATEGORIES.map((c) => ({ organisationId: O, name: c.name, keywords: c.keywords, receiptRequired: c.receiptRequired ?? true })))
     .returning();
   const cat = (name: string) => cats.find((c) => c.name === name)!.id;
 

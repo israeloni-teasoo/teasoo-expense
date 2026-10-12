@@ -13,7 +13,9 @@ import {
   type Role,
 } from "@/db/schema";
 import type { CurrentUser } from "@/lib/auth/current";
-import { hashPassword, passwordProblem } from "@/lib/auth/password";
+import { generatePassword, hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
+import { config, googleEnabled, isCompanyEmail } from "@/lib/config";
+import { credentialsEmail, sendEmail } from "@/lib/email";
 import { audit, diff } from "@/lib/audit";
 import { DomainError, forbidden, notFound } from "@/lib/errors";
 import { can } from "@/lib/rbac";
@@ -38,7 +40,14 @@ export type UserInput = {
   departmentId?: string | null;
   password?: string | null;
   status?: "ACTIVE" | "SUSPENDED";
+  /** Email the login details (ad-hoc staff only). */
+  sendCredentials?: boolean;
 };
+
+/** Company-domain users sign in with Google and have no password. */
+function usesGoogle(email: string) {
+  return googleEnabled() && isCompanyEmail(email);
+}
 
 function validateUser(input: UserInput, requirePassword: boolean) {
   const e: Record<string, string> = {};
@@ -46,21 +55,38 @@ function validateUser(input: UserInput, requirePassword: boolean) {
   if (!input.lastName?.trim()) e.lastName = "Required.";
   if (!EMAIL_RE.test(input.email?.trim() ?? "")) e.email = "Enter a valid email address.";
   if (!ROLES.includes(input.role)) e.role = "Choose a role.";
-  if (requirePassword || input.password) {
+  if (!usesGoogle(input.email ?? "") && (requirePassword || input.password)) {
     const p = passwordProblem(input.password ?? "");
     if (p) e.password = p;
   }
   if (Object.keys(e).length) throw new DomainError("Please correct the highlighted fields.", "VALIDATION", e);
 }
 
+async function deliverCredentials(actor: CurrentUser, user: { firstName: string; email: string }, password: string) {
+  const sent = await sendEmail({ to: user.email, ...credentialsEmail({ name: user.firstName, email: user.email, password, addedBy: actor.fullName }) });
+  return sent;
+}
+
+/**
+ * Admins can add anyone. Accountants can add ad-hoc staff only — people without a company
+ * email, who sign in with a password that can be emailed to them.
+ */
 export async function createUser(actor: CurrentUser, input: UserInput) {
-  requireAdmin(actor, "admin.users");
-  validateUser(input, true);
+  const isAdmin = can(actor.role, "admin.users");
+  if (!isAdmin && !can(actor.role, "users.addAdhoc")) throw forbidden();
   const email = input.email.trim().toLowerCase();
+  const google = usesGoogle(email);
+  if (!isAdmin) {
+    if (input.role !== "STAFF") throw forbidden("Accountants can only add staff. Ask an administrator for other roles.");
+    if (isCompanyEmail(email))
+      throw new DomainError(`@${config.companyDomain} staff don't need to be added — they're let in automatically when they sign in with Google.`, "VALIDATION", { email: "Company email" });
+  }
+  if (!google && !input.password) input.password = generatePassword();
+  validateUser(input, !google);
   const exists = await db.query.users.findFirst({ where: sql`lower(${users.email}) = ${email}` });
   if (exists) throw new DomainError("A user with that email already exists.", "VALIDATION", { email: "Already in use." });
-  const passwordHash = await hashPassword(input.password!);
-  return db.transaction(async (tx) => {
+  const passwordHash = google ? null : await hashPassword(input.password!);
+  const user = await db.transaction(async (tx) => {
     const [user] = await tx
       .insert(users)
       .values({
@@ -73,6 +99,7 @@ export async function createUser(actor: CurrentUser, input: UserInput) {
         role: input.role,
         departmentId: input.departmentId || null,
         passwordHash,
+        passwordSetByAdmin: !google,
       })
       .returning();
     await audit(tx, {
@@ -82,11 +109,40 @@ export async function createUser(actor: CurrentUser, input: UserInput) {
       entityId: user.id,
       entityRef: email,
       action: "CREATED",
-      summary: `${actor.fullName} created user ${user.firstName} ${user.lastName} (${input.role.toLowerCase()})`,
-      newValues: { email, role: input.role, departmentId: user.departmentId },
+      summary: `${actor.fullName} added ${google ? "" : "ad-hoc "}user ${user.firstName} ${user.lastName} (${input.role.toLowerCase()})`,
+      newValues: { email, role: input.role, departmentId: user.departmentId, signIn: google ? "google" : "password" },
     });
     return user;
   });
+  let emailed: boolean | null = null;
+  if (!google && input.sendCredentials) {
+    emailed = (await deliverCredentials(actor, user, input.password!)).ok;
+    await audit(db, { organisationId: actor.organisationId, userId: actor.id, entityType: "USER", entityId: user.id, entityRef: email, action: emailed ? "CREDENTIALS_EMAILED" : "CREDENTIALS_EMAIL_FAILED", summary: `${actor.fullName} ${emailed ? "emailed" : "could not email"} login details to ${email}` });
+  }
+  return { user, google, password: google ? null : input.password!, emailed };
+}
+
+/** Set a fresh temporary password for an ad-hoc user and (optionally) email it. */
+export async function resendLoginDetails(actor: CurrentUser, userId: string, opts: { email: boolean }) {
+  const isAdmin = can(actor.role, "admin.users");
+  if (!isAdmin && !can(actor.role, "users.addAdhoc")) throw forbidden();
+  const target = await db.query.users.findFirst({ where: and(eq(users.id, userId), eq(users.organisationId, actor.organisationId)) });
+  if (!target) throw notFound("User not found.");
+  if (usesGoogle(target.email)) throw new DomainError("This person signs in with Google and has no password.");
+  if (!isAdmin && target.role !== "STAFF") throw forbidden("Accountants can only manage staff logins.");
+  const password = generatePassword();
+  await db.update(users).set({ passwordHash: await hashPassword(password), passwordSetByAdmin: true, resetTokenHash: null }).where(eq(users.id, userId));
+  const emailed = opts.email ? (await deliverCredentials(actor, target, password)).ok : null;
+  await audit(db, {
+    organisationId: actor.organisationId,
+    userId: actor.id,
+    entityType: "USER",
+    entityId: userId,
+    entityRef: target.email,
+    action: "PASSWORD_ISSUED",
+    summary: `${actor.fullName} issued a new password for ${target.firstName} ${target.lastName}${emailed ? " and emailed it" : emailed === false ? " (email failed)" : ""}`,
+  });
+  return { password, emailed };
 }
 
 export async function updateUser(actor: CurrentUser, id: string, input: UserInput) {
@@ -116,9 +172,9 @@ export async function updateUser(actor: CurrentUser, id: string, input: UserInpu
     departmentId: input.departmentId || null,
     status: input.status ?? current.status,
   };
-  const passwordHash = input.password ? await hashPassword(input.password) : undefined;
+  const passwordHash = input.password && !usesGoogle(email) ? await hashPassword(input.password) : undefined;
   await db.transaction(async (tx) => {
-    await tx.update(users).set({ ...next, ...(passwordHash ? { passwordHash } : {}) }).where(eq(users.id, id));
+    await tx.update(users).set({ ...next, ...(passwordHash ? { passwordHash, passwordSetByAdmin: true } : {}) }).where(eq(users.id, id));
     const d = diff(current as unknown as Record<string, unknown>, next);
     if (d.changed || passwordHash) {
       await audit(tx, {
@@ -128,27 +184,34 @@ export async function updateUser(actor: CurrentUser, id: string, input: UserInpu
         entityId: id,
         entityRef: email,
         action: d.newValues.role ? "ROLE_CHANGED" : "UPDATED",
-        summary: `${actor.fullName} updated ${next.firstName} ${next.lastName}${d.newValues.role ? ` (role ${String(d.oldValues.role).toLowerCase()} → ${String(d.newValues.role).toLowerCase()})` : ""}${passwordHash ? " and reset their password" : ""}`,
+        summary: `${actor.fullName} updated ${next.firstName} ${next.lastName}${d.newValues.role ? ` (role ${String(d.oldValues.role).toLowerCase()} → ${String(d.newValues.role).toLowerCase()})` : ""}${passwordHash ? " and set a new password" : ""}`,
         oldValues: d.oldValues,
         newValues: { ...d.newValues, ...(passwordHash ? { password: "changed" } : {}) },
       });
     }
   });
+  if (passwordHash && input.sendCredentials) {
+    await deliverCredentials(actor, { firstName: next.firstName, email }, input.password!);
+  }
 }
 
 /* --------------------------- Profile ------------------------------ */
 
-export async function updateProfile(actor: CurrentUser, input: { phone?: string | null; currentPassword?: string; newPassword?: string }) {
+export async function updateProfile(
+  actor: CurrentUser,
+  input: { phone?: string | null; emailNotifications: boolean; currentPassword?: string; newPassword?: string },
+) {
   const user = await db.query.users.findFirst({ where: eq(users.id, actor.id) });
   if (!user) throw notFound();
-  const updates: Partial<typeof users.$inferInsert> = { phone: input.phone?.trim() || null };
+  const updates: Partial<typeof users.$inferInsert> = { phone: input.phone?.trim() || null, emailNotifications: input.emailNotifications };
   if (input.newPassword) {
-    const { verifyPassword } = await import("@/lib/auth/password");
+    if (!user.passwordHash) throw new DomainError("You sign in with Google, so there's no password to change.");
     if (!input.currentPassword || !(await verifyPassword(input.currentPassword, user.passwordHash)))
       throw new DomainError("Your current password is incorrect.", "VALIDATION", { currentPassword: "Incorrect password." });
     const p = passwordProblem(input.newPassword);
     if (p) throw new DomainError(p, "VALIDATION", { newPassword: p });
     updates.passwordHash = await hashPassword(input.newPassword);
+    updates.passwordSetByAdmin = false;
   }
   await db.transaction(async (tx) => {
     await tx.update(users).set(updates).where(eq(users.id, actor.id));
@@ -162,6 +225,12 @@ export async function updateProfile(actor: CurrentUser, input: { phone?: string 
       summary: `${actor.fullName} updated their profile${input.newPassword ? " and changed their password" : ""}`,
     });
   });
+}
+
+/** The user chose to keep the password that was set for them. */
+export async function keepIssuedPassword(actor: CurrentUser) {
+  await db.update(users).set({ passwordSetByAdmin: false }).where(eq(users.id, actor.id));
+  await audit(db, { organisationId: actor.organisationId, userId: actor.id, entityType: "USER", entityId: actor.id, entityRef: actor.email, action: "KEPT_ISSUED_PASSWORD", summary: `${actor.fullName} chose to keep the password set for them` });
 }
 
 /* ------------------------- Categories ----------------------------- */

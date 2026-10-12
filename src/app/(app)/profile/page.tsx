@@ -32,14 +32,15 @@ export default async function ProfilePage() {
               { label: "Department", value: dept?.name },
               { label: "Job title", value: user.jobTitle },
               { label: "Last sign-in", value: formatDateTime(user.lastLoginAt) },
+              { label: "Signs in with", value: user.hasPassword ? "Email & password" : "Google" },
             ]}
           />
         </CardBody>
       </Card>
       <Card>
-        <CardHeader title="Contact & password" />
+        <CardHeader title={user.hasPassword ? "Contact, notifications & password" : "Contact & notifications"} />
         <CardBody>
-          <ProfileForm phone={user.phone} />
+          <ProfileForm phone={user.phone} emailNotifications={user.emailNotifications} hasPassword={user.hasPassword} />
         </CardBody>
       </Card>
       <Card>

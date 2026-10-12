@@ -40,7 +40,7 @@ async function session(email, viewport = { width: 1280, height: 900 }) {
   await page.fill("#email", email);
   await page.fill("#password", "Password123");
   await page.click("button[type=submit]");
-  await page.waitForURL((u) => !u.pathname.startsWith("/login"));
+  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 8000 });
   return { ctx, page };
 }
 
@@ -180,6 +180,38 @@ await p.getByRole("button", { name: "Approve" }).last().click();
 await p.waitForTimeout(1500);
 await p.goto(johnAlloc + "?tab=funding", { waitUntil: "networkidle" });
 ok(await p.getByText("Reimbursement", { exact: true }).first().isVisible(), "approved claim added a reimbursement adjustment to the allocation");
+
+// ---- Ad-hoc staff: accountant adds someone without a company email ----
+p = acct.page;
+await p.goto(BASE + "/admin/users", { waitUntil: "networkidle" });
+await p.getByRole("button", { name: "Add ad-hoc staff" }).click();
+const adhocEmail = `contractor${Date.now()}@example.com`;
+await p.fill("#firstName", "Bayo");
+await p.fill("#lastName", "Contractor");
+await p.fill("#email", adhocEmail);
+await p.getByRole("button", { name: "Add user" }).click();
+const pwCell = p.locator("dd.font-mono");
+await pwCell.waitFor({ timeout: 15000 });
+const issued = (await pwCell.textContent()).trim();
+ok(/^[A-Z][a-z]+-[A-Z][a-z]+-\d{4}$/.test(issued), `accountant added ad-hoc staff and was shown a generated password`);
+
+const adhoc = await session(adhocEmail.replace("Password123", ""), { width: 390, height: 844 }).catch(() => null);
+ok(adhoc === null, "generated password is required (demo password rejected)");
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  await page.goto(BASE + "/login", { waitUntil: "networkidle" });
+  await page.fill("#email", adhocEmail);
+  await page.fill("#password", issued);
+  await page.click("button[type=submit]");
+  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 15000 });
+  ok(await page.getByText("You're using a password that was set for you.").isVisible(), "ad-hoc staff sees the keep-or-change password prompt");
+  await page.getByRole("button", { name: "Keep it" }).click();
+  await page.waitForTimeout(1500);
+  await page.reload({ waitUntil: "networkidle" });
+  ok(!(await page.getByText("You're using a password that was set for you.").isVisible()), "choosing to keep the password dismisses the prompt");
+  await ctx.close();
+}
 
 await browser.close();
 console.log(failures ? `\n${failures} check(s) failed` : "\nAll smoke checks passed");

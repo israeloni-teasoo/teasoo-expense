@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Forgot password" };
 
 export default function ForgotPasswordPage() {
   return (
-    <AuthLayout title="Reset your password" subtitle="Enter your work email and we'll send you a link to set a new password.">
+    <AuthLayout title="Reset your password" subtitle="For ad-hoc staff who sign in with a password. Company staff sign in with Google and do not need this.">
       <ActionForm action={forgotPasswordAction} resetOnSuccess>
         <FormField name="email" label="Email address">
           <Input id="email" name="email" type="email" autoComplete="email" required />

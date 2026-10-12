@@ -17,13 +17,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // Soft-deleted files remain available to finance for audit purposes only.
   if (doc.deletedAt && user.role === "STAFF") return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  const download = req.nextUrl.searchParams.get("download") === "1";
+  const driver = storage();
+
+  // Object storage: after the access check, hand the browser a 2-minute signed URL so large
+  // files don't stream through the serverless function. The URL is never stored or shown.
+  if (driver.signedUrl) {
+    try {
+      const url = await driver.signedUrl(doc.storageKey, { expiresIn: 120, downloadName: download ? doc.fileName : undefined });
+      if (url) return NextResponse.redirect(url, { headers: { "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" } });
+    } catch (e) {
+      console.error(e);
+      return NextResponse.json({ error: "File unavailable" }, { status: 502 });
+    }
+  }
+
   let data: Buffer;
   try {
-    data = await storage().get(doc.storageKey);
+    data = await driver.get(doc.storageKey);
   } catch {
     return NextResponse.json({ error: "File missing from storage" }, { status: 410 });
   }
-  const download = req.nextUrl.searchParams.get("download") === "1";
   const name = doc.fileName.replace(/"/g, "");
   return new NextResponse(new Uint8Array(data), {
     headers: {

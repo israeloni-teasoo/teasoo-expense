@@ -11,6 +11,8 @@ import { SESSION_COOKIE, verifySession } from "./session";
 
 export type CurrentUser = Omit<User, "passwordHash" | "resetTokenHash" | "resetTokenExpiresAt"> & {
   fullName: string;
+  /** False for Google-only accounts. */
+  hasPassword: boolean;
 };
 
 /** Loads the signed-in user once per request. Suspended users are treated as signed out. */
@@ -22,7 +24,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   if (!row || row.status !== "ACTIVE") return null;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { passwordHash, resetTokenHash, resetTokenExpiresAt, ...rest } = row;
-  return { ...rest, fullName: `${row.firstName} ${row.lastName}` };
+  return { ...rest, fullName: `${row.firstName} ${row.lastName}`, hasPassword: !!passwordHash };
 });
 
 /** For pages: redirect to login when signed out. */

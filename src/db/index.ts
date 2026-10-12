@@ -1,5 +1,6 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import { poolConfig } from "./pool-config";
 import * as schema from "./schema";
 
 declare global {
@@ -7,9 +8,8 @@ declare global {
 }
 
 function createPool() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error("DATABASE_URL is not set");
-  return new Pool({ connectionString, max: 10 });
+  // Serverless functions each hold their own pool, so keep it small and use Supabase's pooler URL.
+  return new Pool(poolConfig(process.env.DATABASE_URL, process.env.VERCEL ? 3 : 10));
 }
 
 // Reuse the pool across hot reloads in development.

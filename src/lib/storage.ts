@@ -17,6 +17,8 @@ export interface StorageDriver {
   put(key: string, data: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer>;
   exists(key: string): Promise<boolean>;
+  /** A short-lived URL the browser can fetch directly, or null to stream through the app. */
+  signedUrl?(key: string, opts: { expiresIn: number; downloadName?: string }): Promise<string | null>;
 }
 
 class LocalDriver implements StorageDriver {
@@ -44,12 +46,67 @@ class LocalDriver implements StorageDriver {
   }
 }
 
+/**
+ * Supabase Storage (private bucket) via its REST API, authenticated with the service-role key,
+ * which must only ever live on the server. https://supabase.com/docs/reference/api/storage
+ */
+class SupabaseDriver implements StorageDriver {
+  constructor(
+    private url: string,
+    private key: string,
+    private bucket: string,
+  ) {}
+  private headers(extra: Record<string, string> = {}) {
+    return { Authorization: `Bearer ${this.key}`, apikey: this.key, ...extra };
+  }
+  private objectPath(key: string) {
+    return `${this.url}/storage/v1/object/${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  }
+  async put(key: string, data: Buffer, contentType: string) {
+    const res = await fetch(this.objectPath(key), {
+      method: "POST",
+      headers: this.headers({ "Content-Type": contentType, "x-upsert": "false", "cache-control": "max-age=3600" }),
+      body: new Uint8Array(data),
+    });
+    if (!res.ok) throw new Error(`Supabase upload failed (${res.status}): ${await res.text()}`);
+  }
+  async get(key: string) {
+    const res = await fetch(this.objectPath(key).replace("/object/", "/object/authenticated/"), { headers: this.headers() });
+    if (!res.ok) throw new Error(`Supabase download failed (${res.status})`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+  async exists(key: string) {
+    const res = await fetch(this.objectPath(key).replace("/object/", "/object/info/"), { headers: this.headers() });
+    return res.ok;
+  }
+  async signedUrl(key: string, opts: { expiresIn: number; downloadName?: string }) {
+    const res = await fetch(this.objectPath(key).replace("/object/", "/object/sign/"), {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ expiresIn: opts.expiresIn }),
+    });
+    if (!res.ok) throw new Error(`Supabase sign failed (${res.status})`);
+    const { signedURL } = (await res.json()) as { signedURL: string };
+    const url = new URL(`${this.url}/storage/v1${signedURL}`);
+    if (opts.downloadName) url.searchParams.set("download", opts.downloadName);
+    return url.toString();
+  }
+}
+
 let driver: StorageDriver | null = null;
 export function storage(): StorageDriver {
   if (driver) return driver;
   const kind = process.env.STORAGE_DRIVER ?? "local";
-  if (kind !== "local") throw new Error(`Unsupported STORAGE_DRIVER "${kind}"`);
-  driver = new LocalDriver(path.resolve(process.env.STORAGE_DIR ?? "./storage/uploads"));
+  if (kind === "supabase") {
+    const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) throw new Error("STORAGE_DRIVER=supabase requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
+    driver = new SupabaseDriver(url, key, process.env.SUPABASE_STORAGE_BUCKET ?? "receipts");
+  } else if (kind === "local") {
+    driver = new LocalDriver(path.resolve(process.env.STORAGE_DIR ?? "./storage/uploads"));
+  } else {
+    throw new Error(`Unsupported STORAGE_DRIVER "${kind}"`);
+  }
   return driver;
 }
 

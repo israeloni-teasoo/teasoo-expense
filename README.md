@@ -21,7 +21,7 @@ Responsive throughout: a sidebar layout on desktop, and on phones a bottom tab b
 | **Over-spending** | Over-budget expenses are flagged; staff log a claim with evidence of approval → accountant recommends → admin approves → the funds are added to the allocation as an adjustment |
 | **Reports & export** | Expense, staff accountability, allocation, category, project and department reports for Today / This week / This month / Last month / This quarter / This year / custom ranges. Exports to **Excel, CSV and PDF** for the current view, all expenses, selected rows, a single allocation, staff or project reports |
 | **Audit & integrity** | Every important action is written to an append-only audit log (user, action, time, record, old/new values, IP / device) in the same transaction as the change. Financial records are voided, never deleted. Approved expenses can't be edited. Nobody can approve their own expense or decide their own claim |
-| **Notifications** | In-app notifications for new funds, approvals, rejections, questions, near-depletion, overdue allocations, new submissions, missing receipts, over-budget, ready-to-reconcile and claims |
+| **Notifications** | In-app and email (Resend; each person can turn email off in their profile) notifications for new funds, approvals, rejections, questions, near-depletion, overdue allocations, new submissions, missing receipts, over-budget, ready-to-reconcile and claims |
 
 ## Tech stack
 
@@ -30,6 +30,13 @@ Responsive throughout: a sidebar layout on desktop, and on phones a bottom tab b
 - **Tailwind CSS**, lucide icons, **Recharts**
 - **ExcelJS**, **jsPDF** for exports
 - Session auth with `jose` (HS256 JWT in an httpOnly cookie) and `bcryptjs`
+- **Google sign-in** (OpenID Connect with PKCE) for the company domain, **Resend** for email, **Supabase Storage** for receipts
+
+### Signing in
+
+- **Company staff** (`@teasooconsulting.com`) use **Sign in with Google**. Anyone on the domain is let in as **Staff** on first sign-in; administrators adjust roles and departments under **Users**. Emails listed in `BOOTSTRAP_ADMIN_EMAILS` become administrators on their first sign-in, which is how the first admin is created on a fresh database. Personal Gmail and other domains are refused (the ID token's `hd` claim must match).
+- **Ad-hoc staff** without a company email are added by an administrator or accountant from **Users → Add ad-hoc staff**. A readable password is generated (or typed), and the login details are emailed to them, or shown once to share if email isn't configured. After signing in they're asked whether to keep that password or choose their own. Accountants can issue new login details for staff; they can't create other roles.
+- Password reset by email is available to ad-hoc staff only.
 
 ### Money
 
@@ -43,7 +50,7 @@ outstanding  = total funded − approved − returned            (must be ₦0 t
 
 ### Receipts
 
-Files are validated by their actual content (magic bytes), stored outside the database, and only reachable through `/api/documents/[id]`, which checks the viewer's access on every request. The default driver writes to a private directory (`STORAGE_DIR`); implement `StorageDriver` in `src/lib/storage.ts` to use S3, Cloudflare R2 or Supabase Storage.
+Files are validated by their actual content (magic bytes), stored outside the database, and only reachable through `/api/documents/[id]`, which checks the viewer's access on every request. In production they live in a **private Supabase Storage bucket**; after the access check the route redirects to a 2-minute signed URL. Photos are downscaled in the browser before upload (≤2000px JPEG, typically a few hundred KB), which keeps uploads under Vercel's 4.5 MB request limit and stretches the storage free tier. `STORAGE_DRIVER=local` writes to a private folder for development.
 
 ## Getting started
 
@@ -68,17 +75,18 @@ Demo accounts (password `Password123`):
 
 `npm run db:reset` drops everything, re-runs migrations and re-seeds (refuses to run when `NODE_ENV=production`).
 
-### Production
+### Deploying to Vercel + Supabase
 
-```bash
-npm run build
-npm run db:migrate
-npm start
-```
+1. **Supabase** — create a project. From **Connect**, copy the *Transaction pooler* string (port 6543) for `DATABASE_URL` and the *Session pooler* string (port 5432) for `DIRECT_URL`. From **Project Settings → API**, copy the project URL (`SUPABASE_URL`) and the `service_role` key (`SUPABASE_SERVICE_ROLE_KEY`, secret).
+2. **Receipts bucket** — with those values in a local `.env`, run `npm run storage:setup` once to create the private `receipts` bucket (or create it in the dashboard with *Public* turned off).
+3. **Google** — in Google Cloud Console create an OAuth client ID (*Web application*). Authorised redirect URI: `https://<your-domain>/api/auth/google/callback` (add `http://localhost:3000/api/auth/google/callback` for development). Set the consent screen to *Internal* so only Workspace accounts can use it.
+4. **Resend** — add and verify `teasooconsulting.com` under **Domains** (DNS records), then create an API key.
+5. **Vercel** — import the repository and set the environment variables from `.env.example`, including `STORAGE_DRIVER=supabase`, `APP_URL=https://<your-domain>` and `BOOTSTRAP_ADMIN_EMAILS=<your email>`. The `vercel-build` script runs database migrations before `next build`.
+6. Sign in with Google using the bootstrap admin email. The organisation, default departments and categories are created automatically on that first sign-in. Don't run `db:seed` against production — it's demo data.
 
-Set `AUTH_SECRET`, `DATABASE_URL`, `APP_URL`, and serve over HTTPS (session cookies are `Secure` in production). The demo-account hint on the login page is hidden in production unless `SHOW_DEMO_ACCOUNTS=1`.
+Session cookies are `Secure` in production, so serve over HTTPS (Vercel does). The demo-account hint on the login page is hidden in production unless `SHOW_DEMO_ACCOUNTS=1`.
 
-Password resets: without an email service configured, reset links are written to the server log (`[password-reset]`); administrators can also set a new password from **Users**.
+Without `RESEND_API_KEY`, emails are written to the server log instead of being sent, and new ad-hoc staff passwords are shown on screen to share.
 
 ## Testing
 
@@ -87,9 +95,10 @@ npm test              # unit tests: money parsing, balance maths, reporting peri
 npm run typecheck
 npm run lint
 npm run test:smoke    # end-to-end workflow against a running app with fresh seed data (needs Playwright)
+npm run storage:setup # create the private Supabase receipts bucket (once)
 ```
 
-The smoke test drives the real UI: staff logs an expense with a receipt on a phone-sized screen, sees the duplicate warning, uploads a forged PDF (rejected), accountant approves, records a return, reconciles to ₦0, downloads Excel/CSV/PDF exports, and an over-spend claim goes through recommend → approve.
+The smoke test drives the real UI: staff logs an expense with a receipt on a phone-sized screen, sees the duplicate warning, uploads a forged PDF (rejected), accountant approves, records a return, reconciles to ₦0, downloads Excel/CSV/PDF exports, an over-spend claim goes through recommend → approve, and an accountant adds an ad-hoc staff member who signs in with the issued password and chooses to keep it.
 
 ## REST API
 
@@ -97,7 +106,8 @@ All routes use the session cookie (`POST /api/auth` with `{ email, password }` t
 
 | Method | Route | Notes |
 | --- | --- | --- |
-| `POST` / `DELETE` | `/api/auth` | Sign in / out |
+| `POST` / `DELETE` | `/api/auth` | Sign in (ad-hoc staff password) / out |
+| `GET` | `/api/auth/google` | Start Google sign-in (browser redirect) |
 | `GET` / `POST` | `/api/allocations` | List (own for staff, all for finance) / create |
 | `GET` | `/api/allocations/:id` | Allocation, balance, expenses, adjustments, returns, timeline |
 | `GET` / `POST` | `/api/expenses` | Filterable list / create (`submit`, `confirmDuplicate`, `confirmOverBudget` flags) |
@@ -129,4 +139,4 @@ e2e/smoke.mjs          end-to-end workflow test
 
 ## Roadmap (from the spec, not yet built)
 
-Receipt OCR, Google / Microsoft sign-in, email & WhatsApp notifications, recurring allocations, bulk imports, S3/R2 storage driver, and Phase 3 finance-operations features (purchase requests, vendors, budgets, bank matching, accounting integrations).
+Receipt OCR, WhatsApp notifications, recurring allocations, bulk imports, and Phase 3 finance-operations features (purchase requests, vendors, budgets, bank matching, accounting integrations).

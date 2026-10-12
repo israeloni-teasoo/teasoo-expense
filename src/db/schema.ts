@@ -111,7 +111,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   duplicateDetection: true,
   blockFutureDates: true,
   requireReceipt: true,
-  maxUploadMb: 10,
+  maxUploadMb: 4,
   nearDepletionPercent: 80,
   unusualMultiplier: 3,
 };
@@ -150,7 +150,13 @@ export const users = pgTable(
     email: text("email").notNull(),
     phone: text("phone"),
     jobTitle: text("job_title"),
-    passwordHash: text("password_hash").notNull(),
+    /** Null for people who sign in with Google only. */
+    passwordHash: text("password_hash"),
+    /** Google account subject ("sub" claim), linked on first Google sign-in. */
+    googleSub: text("google_sub").unique(),
+    /** True while the user still has the password an admin/accountant set for them. */
+    passwordSetByAdmin: boolean("password_set_by_admin").notNull().default(false),
+    emailNotifications: boolean("email_notifications").notNull().default(true),
     status: userStatusEnum("status").notNull().default("ACTIVE"),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     resetTokenHash: text("reset_token_hash"),

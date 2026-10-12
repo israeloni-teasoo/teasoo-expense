@@ -1,12 +1,16 @@
 import "server-only";
 import { asc, eq } from "drizzle-orm";
 import { db, type Executor } from "@/db";
+import { config } from "@/lib/config";
 import { DEFAULT_ORG_SETTINGS, departments, expenseCategories, organisations, projects, users, type OrgSettings } from "@/db/schema";
 
 export async function getOrg(orgId: string, exec: Executor = db) {
   const org = await exec.query.organisations.findFirst({ where: eq(organisations.id, orgId) });
   if (!org) throw new Error("Organisation not found");
-  return { ...org, settings: { ...DEFAULT_ORG_SETTINGS, ...(org.settings ?? {}) } as OrgSettings };
+  const settings = { ...DEFAULT_ORG_SETTINGS, ...(org.settings ?? {}) } as OrgSettings;
+  // The hosting platform's request-size limit wins over the configured upload size.
+  settings.maxUploadMb = Math.min(settings.maxUploadMb, config.platformUploadCapMb);
+  return { ...org, settings };
 }
 
 export async function getSettings(orgId: string, exec: Executor = db): Promise<OrgSettings> {

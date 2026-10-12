@@ -1,32 +1,46 @@
 "use client";
 
+import { useState } from "react";
 import { ActionForm, FormField, SubmitButton } from "@/components/ui/action-form";
+import { Button } from "@/components/ui/button";
+import { useModal } from "@/components/ui/modal";
 import { Checkbox, Input, MoneyInput, Select, Textarea } from "@/components/ui/form";
 import { koboToInput } from "@/lib/money";
 import type { OrgSettings, Role } from "@/db/schema";
-import { saveCategoryAction, saveDepartmentAction, saveProjectAction, saveSettingsAction, saveUserAction } from "@/app/actions/admin";
+import { resendLoginAction, saveCategoryAction, saveDepartmentAction, saveProjectAction, saveSettingsAction, saveUserAction, type IssuedCredentials } from "@/app/actions/admin";
 import { updateProfileAction } from "@/app/actions/account";
 
 type Opt = { id: string; name: string };
 
-export function ProfileForm({ phone }: { phone: string | null }) {
+export function ProfileForm({ phone, emailNotifications, hasPassword }: { phone: string | null; emailNotifications: boolean; hasPassword: boolean }) {
   return (
     <ActionForm action={updateProfileAction}>
       <FormField name="phone" label="Phone">
         <Input id="phone" name="phone" type="tel" defaultValue={phone ?? ""} autoComplete="tel" />
       </FormField>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <FormField name="currentPassword" label="Current password">
-          <Input id="currentPassword" name="currentPassword" type="password" autoComplete="current-password" />
-        </FormField>
-        <FormField name="newPassword" label="New password">
-          <Input id="newPassword" name="newPassword" type="password" autoComplete="new-password" />
-        </FormField>
-        <FormField name="confirmPassword" label="Confirm new password">
-          <Input id="confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" />
-        </FormField>
-      </div>
-      <p className="text-xs text-gray-500">Leave the password fields empty to keep your current password.</p>
+      <Checkbox
+        name="emailNotifications"
+        defaultChecked={emailNotifications}
+        label="Email me notifications"
+        description="Approvals, questions, new funds and reminders are also sent to your inbox."
+      />
+      {hasPassword && (
+        <div id="password" className="scroll-mt-24 space-y-4 border-t border-gray-100 pt-4">
+          <p className="text-sm font-medium text-gray-900">Change password</p>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <FormField name="currentPassword" label="Current password">
+              <Input id="currentPassword" name="currentPassword" type="password" autoComplete="current-password" />
+            </FormField>
+            <FormField name="newPassword" label="New password">
+              <Input id="newPassword" name="newPassword" type="password" autoComplete="new-password" />
+            </FormField>
+            <FormField name="confirmPassword" label="Confirm new password">
+              <Input id="confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" />
+            </FormField>
+          </div>
+          <p className="text-xs text-gray-500">Leave the password fields empty to keep your current password.</p>
+        </div>
+      )}
       <div className="flex justify-end">
         <SubmitButton pendingText="Saving…">Save</SubmitButton>
       </div>
@@ -34,16 +48,82 @@ export function ProfileForm({ phone }: { phone: string | null }) {
   );
 }
 
+function CredentialsPanel({ creds, onDone }: { creds: IssuedCredentials; onDone?: () => void }) {
+  const [copied, setCopied] = useState(false);
+  if (creds.google) {
+    return (
+      <div className="space-y-3">
+        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          <span className="font-semibold">{creds.email}</span> has been added. They sign in with “Sign in with Google” — no password needed.
+        </p>
+        {onDone && <div className="flex justify-end"><Button type="button" onClick={onDone}>Done</Button></div>}
+      </div>
+    );
+  }
+  const text = `Sign in at ${window.location.origin}/login\nEmail: ${creds.email}\nPassword: ${creds.password}`;
+  return (
+    <div className="space-y-3">
+      {creds.emailed ? (
+        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Login details were emailed to <span className="font-semibold">{creds.email}</span>.</p>
+      ) : (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {creds.emailed === false ? "The email could not be sent. " : ""}Share these login details with them securely — the password won&apos;t be shown again.
+        </p>
+      )}
+      <dl className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+        <div className="flex justify-between gap-3"><dt className="text-gray-500">Email</dt><dd className="font-medium">{creds.email}</dd></div>
+        <div className="mt-1 flex justify-between gap-3"><dt className="text-gray-500">Password</dt><dd className="font-mono font-semibold">{creds.password}</dd></div>
+      </dl>
+      <div className="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={async () => {
+            await navigator.clipboard.writeText(text);
+            setCopied(true);
+          }}
+        >
+          {copied ? "Copied" : "Copy details"}
+        </Button>
+        {onDone && <Button type="button" onClick={onDone}>Done</Button>}
+      </div>
+    </div>
+  );
+}
+
 export function UserForm({
   user,
   departments,
+  canChooseRole = true,
+  companyDomain,
+  googleSignIn,
 }: {
   user?: { id: string; firstName: string; lastName: string; email: string; phone: string | null; jobTitle: string | null; role: Role; departmentId: string | null; status: string };
   departments: Opt[];
+  /** Accountants can only add ad-hoc staff. */
+  canChooseRole?: boolean;
+  companyDomain: string;
+  googleSignIn: boolean;
 }) {
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [creds, setCreds] = useState<IssuedCredentials | null>(null);
+  const modal = useModal();
+  const usesGoogle = googleSignIn && email.trim().toLowerCase().endsWith("@" + companyDomain);
+  if (creds) return <CredentialsPanel creds={creds} onDone={() => modal?.close()} />;
   return (
-    <ActionForm action={saveUserAction} resetOnSuccess={!user}>
+    <ActionForm
+      action={saveUserAction}
+      closeOnSuccess={!!user}
+      onSuccess={(r) => {
+        if (!user && r.ok && r.data) setCreds(r.data as IssuedCredentials);
+      }}
+    >
       {user && <input type="hidden" name="userId" value={user.id} />}
+      {!user && !canChooseRole && (
+        <p className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
+          For people without an @{companyDomain} email — contractors, temporary or field staff. They sign in with an email and password.
+        </p>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField name="firstName" label="First name" required>
           <Input id="firstName" name="firstName" defaultValue={user?.firstName} />
@@ -51,17 +131,27 @@ export function UserForm({
         <FormField name="lastName" label="Last name" required>
           <Input id="lastName" name="lastName" defaultValue={user?.lastName} />
         </FormField>
-        <FormField name="email" label="Email" required className="sm:col-span-2">
-          <Input id="email" name="email" type="email" defaultValue={user?.email} />
+        <FormField
+          name="email"
+          label="Email"
+          required
+          className="sm:col-span-2"
+          hint={usesGoogle ? `@${companyDomain} accounts sign in with Google, so no password is set.` : undefined}
+        >
+          <Input id="email" name="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </FormField>
-        <FormField name="role" label="Role" required>
-          <Select id="role" name="role" defaultValue={user?.role ?? "STAFF"}>
-            <option value="STAFF">Staff</option>
-            <option value="ACCOUNTANT">Accountant</option>
-            <option value="ADMIN">Administrator</option>
-            <option value="MANAGEMENT">Management (read-only)</option>
-          </Select>
-        </FormField>
+        {canChooseRole ? (
+          <FormField name="role" label="Role" required>
+            <Select id="role" name="role" defaultValue={user?.role ?? "STAFF"}>
+              <option value="STAFF">Staff</option>
+              <option value="ACCOUNTANT">Accountant</option>
+              <option value="ADMIN">Administrator</option>
+              <option value="MANAGEMENT">Management (read-only)</option>
+            </Select>
+          </FormField>
+        ) : (
+          <input type="hidden" name="role" value="STAFF" />
+        )}
         <FormField name="departmentId" label="Department">
           <Select id="departmentId" name="departmentId" defaultValue={user?.departmentId ?? ""}>
             <option value="">—</option>
@@ -84,12 +174,45 @@ export function UserForm({
             </Select>
           </FormField>
         )}
-        <FormField name="password" label={user ? "Reset password" : "Temporary password"} required={!user} hint={user ? "Leave blank to keep the current password." : "At least 8 characters with letters and numbers."}>
-          <Input id="password" name="password" type="text" autoComplete="new-password" />
-        </FormField>
+        {!usesGoogle && (
+          <FormField
+            name="password"
+            label={user ? "Set a new password" : "Password"}
+            hint={user ? "Leave blank to keep the current password." : "Leave blank to generate a secure one."}
+          >
+            <Input id="password" name="password" type="text" autoComplete="new-password" />
+          </FormField>
+        )}
       </div>
+      {!usesGoogle && (
+        <Checkbox
+          name="sendCredentials"
+          defaultChecked={!user}
+          label="Email the login details to them"
+          description="They can keep the password or change it after signing in."
+        />
+      )}
       <div className="flex justify-end">
-        <SubmitButton pendingText="Saving…">{user ? "Save changes" : "Create user"}</SubmitButton>
+        <SubmitButton pendingText="Saving…">{user ? "Save changes" : "Add user"}</SubmitButton>
+      </div>
+    </ActionForm>
+  );
+}
+
+export function ResendLoginForm({ userId, email }: { userId: string; email: string }) {
+  const [creds, setCreds] = useState<IssuedCredentials | null>(null);
+  const modal = useModal();
+  if (creds) return <CredentialsPanel creds={creds} onDone={() => modal?.close()} />;
+  return (
+    <ActionForm action={resendLoginAction} closeOnSuccess={false} onSuccess={(r) => r.ok && r.data && setCreds(r.data as IssuedCredentials)}>
+      <input type="hidden" name="userId" value={userId} />
+      <input type="hidden" name="email" value={email} />
+      <p className="text-sm text-gray-600">
+        A new password will be generated for <span className="font-medium text-gray-900">{email}</span>. Their current password stops working.
+      </p>
+      <Checkbox name="sendCredentials" defaultChecked label="Email the new login details to them" />
+      <div className="flex justify-end">
+        <SubmitButton pendingText="Issuing…">Issue new password</SubmitButton>
       </div>
     </ActionForm>
   );

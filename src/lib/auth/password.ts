@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
@@ -22,4 +22,11 @@ export function createResetToken(): { token: string; hash: string } {
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/** Readable but strong temporary password, e.g. "Kite-Mango-4827". */
+export function generatePassword() {
+  const words = ["Amber", "Baobab", "Cedar", "Delta", "Ember", "Falcon", "Garnet", "Harbor", "Indigo", "Jasper", "Kite", "Lagoon", "Mango", "Niger", "Onyx", "Palm", "Quartz", "River", "Savanna", "Tiger", "Umber", "Violet", "Willow", "Zebra"];
+  const pick = () => words[randomInt(words.length)];
+  return `${pick()}-${pick()}-${randomInt(1000, 10000)}`;
 }

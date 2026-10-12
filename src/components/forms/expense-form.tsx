@@ -153,7 +153,8 @@ function Steps({
     if (!list) return;
     const accepted: File[] = [];
     for (const f of Array.from(list)) {
-      if (f.size > maxUploadMb * 1024 * 1024) {
+      // Photos are downscaled in the browser before upload, so only PDFs need to fit the limit as-is.
+      if (f.size > maxUploadMb * 1024 * 1024 && !/^image\//.test(f.type)) {
         setLocalError(`"${f.name}" is larger than ${maxUploadMb} MB.`);
         continue;
       }
