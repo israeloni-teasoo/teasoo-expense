@@ -1,8 +1,8 @@
 import "server-only";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { db, type Executor } from "@/db";
 import { config } from "@/lib/config";
-import { DEFAULT_ORG_SETTINGS, departments, expenseCategories, organisations, projects, users, type OrgSettings } from "@/db/schema";
+import { DEFAULT_ORG_SETTINGS, departments, expenseCategories, memberships, organisations, projects, users, type OrgSettings } from "@/db/schema";
 
 export async function getOrg(orgId: string, exec: Executor = db) {
   const org = await exec.query.organisations.findFirst({ where: eq(organisations.id, orgId) });
@@ -17,7 +17,7 @@ export async function getSettings(orgId: string, exec: Executor = db): Promise<O
   return (await getOrg(orgId, exec)).settings;
 }
 
-/** Reference data used across forms and filters. */
+/** Reference data used across forms and filters. `users` are the members of the organisation. */
 export async function getLookups(orgId: string) {
   const [cats, depts, projs, people] = await Promise.all([
     db.select().from(expenseCategories).where(eq(expenseCategories.organisationId, orgId)).orderBy(asc(expenseCategories.name)),
@@ -29,12 +29,14 @@ export async function getLookups(orgId: string) {
         firstName: users.firstName,
         lastName: users.lastName,
         email: users.email,
-        role: users.role,
-        status: users.status,
-        departmentId: users.departmentId,
+        role: memberships.role,
+        // Suspended in this organisation, or everywhere.
+        status: sql<"ACTIVE" | "SUSPENDED">`case when ${memberships.status} = 'ACTIVE' and ${users.status} = 'ACTIVE' then 'ACTIVE' else 'SUSPENDED' end`,
+        departmentId: memberships.departmentId,
       })
-      .from(users)
-      .where(eq(users.organisationId, orgId))
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .where(and(eq(memberships.organisationId, orgId)))
       .orderBy(asc(users.firstName), asc(users.lastName)),
   ]);
   return {

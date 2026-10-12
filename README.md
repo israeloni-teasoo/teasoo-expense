@@ -39,8 +39,17 @@ Responsive throughout: a sidebar layout on desktop, and on phones a bottom tab b
 
 ### Signing in
 
-- **Company staff** (`@teasooconsulting.com`) use **Sign in with Google**. Anyone on the domain is let in as **Staff** on first sign-in; administrators adjust roles and departments under **Users**. Emails listed in `BOOTSTRAP_ADMIN_EMAILS` become administrators on their first sign-in, which is how the first admin is created on a fresh database. Personal Gmail and other domains are refused (the ID token's `hd` claim must match).
-- **Ad-hoc staff** without a company email are added by an administrator or accountant from **Users → Add ad-hoc staff**. A readable password is generated (or typed), and the login details are emailed to them, or shown once to share if email isn't configured. After signing in they're asked whether to keep that password or choose their own. Accountants can issue new login details for staff; they can't create other roles.
+- **Access is by invitation only.** An administrator or accountant invites people from **Users → Invite user**, choosing which organisation(s) they join. Nobody can sign up on their own; an uninvited Google account is refused with "You haven't been invited yet".
+- **Company staff** (`@teasooconsulting.com`) get an invitation email and use **Sign in with Google**. Emails listed in `BOOTSTRAP_ADMIN_EMAILS` are the one exception: they become group administrators on their first sign-in, which is how the first admin is created on a fresh database. Personal Gmail and other domains are refused for Google sign-in (the ID token's `hd` claim must match).
+- **Ad-hoc staff** without a company email get a readable generated (or typed) password in their invitation, or it's shown once to share if email isn't configured. After signing in they're asked whether to keep that password or choose their own. Accountants can invite Staff only and issue new login details for staff.
+
+### Organisations (subsidiaries)
+
+- Each organisation has its own people, allocations, expenses, categories, departments, projects, settings, reports and audit log.
+- **Group administrators** manage every organisation: **Administration → Organisations** to add a company (name, currency, logo), rename it or archive it. A new organisation starts with the default departments and categories, and its creator becomes its administrator. An organisation's own administrators can change its logo in **Settings**.
+- One person can belong to several organisations with a different role and department in each. Pick the organisations when inviting, or tick/untick them later under **Users → Edit**. Inviting someone who already has an account just adds the organisation to it.
+- The **organisation menu** next to the logo at the top left switches between companies (it only appears for people in more than one). Links to a record in another organisation — from a notification or an email — switch automatically.
+- Expense categories include **Others**: when chosen, staff type the real category (e.g. "Others: Gifts"), which shows in lists, details and exports. Any category can be made free-text under **Categories**.
 - Password reset by email is available to ad-hoc staff only.
 
 ### Money
@@ -65,7 +74,7 @@ Requirements: Node.js 20+ and PostgreSQL 14+.
 cp .env.example .env          # then set DATABASE_URL and a long random AUTH_SECRET
 npm install
 npm run db:migrate            # create tables
-npm run db:seed               # optional demo organisation
+npm run db:seed               # optional demo data (two organisations)
 npm run dev                   # http://localhost:3000
 ```
 
@@ -89,7 +98,7 @@ Demo accounts (password `Password123`):
 5. **Vercel** — import the repository and set the environment variables from `.env.example`, including `BOOTSTRAP_ADMIN_EMAILS=<your email>`. Tick **Production and Preview** for every variable — branch deployments are *Preview* builds and don't see Production-only variables. The `vercel-build` script checks the environment (`npm run check-env` prints exactly what's missing), runs database migrations, then `next build`.
 
    If you connected Supabase through the **Vercel Marketplace integration**, its variables are picked up automatically: `POSTGRES_URL` is used as the app connection, `POSTGRES_URL_NON_POOLING` for migrations, and `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` switch receipt storage to Supabase. You then only need to add `AUTH_SECRET`, the Google and Resend keys and `BOOTSTRAP_ADMIN_EMAILS`. `APP_URL` defaults to the project's production domain.
-6. Sign in with Google using the bootstrap admin email. The organisation, default departments and categories are created automatically on that first sign-in. Don't run `db:seed` against production — it's demo data.
+6. Sign in with Google using the bootstrap admin email. The first organisation, its default departments and categories are created automatically on that first sign-in. Then add subsidiaries under **Organisations** and invite people under **Users**. Don't run `db:seed` against production — it's demo data.
 
 Session cookies are `Secure` in production, so serve over HTTPS (Vercel does). The demo-account hint on the login page is hidden in production unless `SHOW_DEMO_ACCOUNTS=1`.
 
@@ -108,7 +117,7 @@ npm run storage:setup # create the private Supabase receipts bucket (once)
 npm run check-env     # list missing / optional environment settings
 ```
 
-The smoke test drives the real UI: staff logs an expense with a receipt on a phone-sized screen, sees the duplicate warning, uploads a forged PDF (rejected), accountant approves, records a return, reconciles to ₦0, downloads Excel/CSV/PDF exports, an over-spend claim goes through recommend → approve, and an accountant adds an ad-hoc staff member who signs in with the issued password and chooses to keep it.
+The smoke test drives the real UI: staff logs an expense with a receipt on a phone-sized screen, sees the duplicate warning, uploads a forged PDF (rejected), accountant approves, records a return, reconciles to ₦0, downloads Excel/CSV/PDF exports, an over-spend claim goes through recommend → approve, an accountant invites an ad-hoc staff member who signs in with the issued password and chooses to keep it, staff record an "Others" expense with a typed category, and an admin switches to the subsidiary, invites an existing user into it and creates a new organisation with a logo.
 
 ## REST API
 

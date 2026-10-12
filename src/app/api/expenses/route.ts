@@ -49,6 +49,7 @@ export const POST = api(async (user, req) => {
     {
       allocationId: s(b.allocationId),
       categoryId: s(b.categoryId),
+      categoryOther: os(b.categoryOther),
       projectId: os(b.projectId),
       expenseDate: s(b.expenseDate),
       amount: apiMoney(b.amount),

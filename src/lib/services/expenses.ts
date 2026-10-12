@@ -10,9 +10,11 @@ import {
   feedback,
   expenseReviews,
   expenses,
+  memberships,
   projects,
   users,
   type DocumentKind,
+  type Role,
   type Expense,
   type ExpenseStatus,
 } from "@/db/schema";
@@ -31,6 +33,7 @@ import { canViewAllocation, createPersonalSpendRecord, lockAllocation, maybeNoti
 import { DEFAULT_PERSONAL_SPEND_PURPOSE, PERSONAL_SPEND_CHOICE } from "@/lib/personal-spend";
 import { loadBalance } from "./balances";
 import { getSettings } from "./org";
+import { categoryLabel, categoryLabelSql } from "@/lib/category-label";
 
 /* ------------------------------------------------------------------ */
 /* Queries                                                             */
@@ -158,7 +161,7 @@ export async function listExpenses(actor: CurrentUser, f: ExpenseFilters) {
         expense: expenses,
         staffFirst: users.firstName,
         staffLast: users.lastName,
-        categoryName: expenseCategories.name,
+        categoryName: categoryLabelSql,
         allocationRef: allocations.reference,
         allocationPurpose: allocations.purpose,
         projectName: projects.name,
@@ -229,9 +232,10 @@ export async function getExpenseDetail(actor: CurrentUser, id: string) {
       .where(and(eq(documents.expenseId, id), isNull(documents.deletedAt)))
       .orderBy(asc(documents.uploadedAt)),
     db
-      .select({ review: expenseReviews, first: users.firstName, last: users.lastName, role: users.role })
+      .select({ review: expenseReviews, first: users.firstName, last: users.lastName, role: sql<Role>`coalesce(${memberships.role}, ${users.role})` })
       .from(expenseReviews)
       .innerJoin(users, eq(users.id, expenseReviews.reviewerId))
+      .leftJoin(memberships, and(eq(memberships.userId, expenseReviews.reviewerId), eq(memberships.organisationId, actor.organisationId)))
       .where(eq(expenseReviews.expenseId, id))
       .orderBy(asc(expenseReviews.createdAt)),
     loadBalance(allocation.id),
@@ -340,6 +344,8 @@ export { suggestCategory } from "@/lib/suggest";
 export type ExpenseInput = {
   allocationId: string;
   categoryId: string;
+  /** Required when the "Others" category is chosen: what the expense actually was. */
+  categoryOther?: string | null;
   projectId?: string | null;
   expenseDate: string;
   amount: number | null;
@@ -394,11 +400,15 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
     where: and(eq(expenseCategories.id, input.categoryId), eq(expenseCategories.organisationId, actor.organisationId)),
   });
   if (!category || category.archived) throw new DomainError("Choose an active category.", "VALIDATION", { categoryId: "Invalid category." });
+  const categoryOther = category.isOther ? input.categoryOther?.trim() || "" : null;
+  if (categoryOther === "") throw new DomainError("Type the category for this expense.", "VALIDATION", { categoryOther: "Type the category." });
+  if (categoryOther && categoryOther.length > 60) throw new DomainError("Keep the category under 60 characters.", "VALIDATION", { categoryOther: "Too long." });
 
   // "My own money": use the staff member's open personal-spend record, creating it if needed.
   if (input.allocationId === PERSONAL_SPEND_CHOICE) {
     const open = await db.query.allocations.findFirst({
       where: and(
+        eq(allocations.organisationId, actor.organisationId),
         eq(allocations.staffId, actor.id),
         eq(allocations.kind, "REIMBURSEMENT"),
         eq(allocations.status, "ACTIVE"),
@@ -494,7 +504,7 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
         throw new DomainError(
           allocation.kind === "REIMBURSEMENT"
             ? "Personal-spend claims need a receipt. Upload a receipt or save as a draft."
-            : `A receipt is required for ${category.name} expenses. Upload a receipt or save as a draft.`,
+            : `A receipt is required for ${categoryLabel(category.name, categoryOther)} expenses. Upload a receipt or save as a draft.`,
           "VALIDATION",
           { receipts: "Upload at least one receipt (JPG, PNG, WebP or PDF)." },
         );
@@ -505,6 +515,7 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
     const values = {
       allocationId: allocation.id,
       categoryId: category.id,
+      categoryOther,
       projectId: input.projectId || allocation.projectId || null,
       departmentId: allocation.departmentId ?? actor.departmentId ?? null,
       expenseDate: input.expenseDate,
@@ -568,7 +579,7 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
         allocationId: allocation.id,
         action: opts.submit ? "SUBMITTED" : "CREATED",
         summary: `${actor.fullName} ${opts.submit ? "submitted" : "drafted"} ${formatMoney(amount)} expense — ${values.description}`,
-        newValues: { amount, description: values.description, category: category.name, expenseDate: values.expenseDate, vendor: values.vendor },
+        newValues: { amount, description: values.description, category: categoryLabel(category.name, categoryOther), expenseDate: values.expenseDate, vendor: values.vendor },
       });
       if (opts.submit) {
         await tx.insert(expenseReviews).values({ expenseId: saved.id, reviewerId: actor.id, action: "SUBMITTED", comment: opts.comment?.trim() || null });
@@ -641,6 +652,7 @@ async function afterSubmit(
     }, actor.id);
   } else if (balance.totalFunded > 0 && balance.utilisation >= settings.nearDepletionPercent) {
     await notifyUsers(tx, [actor.id], {
+      organisationId: actor.organisationId,
       type: "NEAR_DEPLETION",
       title: `${allocation.purpose} is ${balance.utilisation}% used`,
       body: `${formatMoney(balance.available)} remaining.`,
@@ -704,6 +716,7 @@ export async function voidExpense(actor: CurrentUser, id: string, reason: string
     });
     if (!isOwner) {
       await notifyUsers(tx, [expense.staffId], {
+        organisationId: actor.organisationId,
         type: "EXPENSE_VOIDED",
         title: `Expense voided: ${formatMoney(expense.amount)}`,
         body: `${expense.description} — ${reason.trim()}`,
@@ -783,6 +796,7 @@ export async function reviewExpense(actor: CurrentUser, id: string, decision: Re
         EVIDENCE: `Receipt requested for your ${formatMoney(expense.amount)} expense`,
       } as const;
       await notifyUsers(tx, [expense.staffId], {
+        organisationId: actor.organisationId,
         type: `EXPENSE_${decision}`,
         title: titles[decision],
         body: note ? `${expense.description} — "${note}"` : expense.description,
@@ -822,6 +836,7 @@ export async function addReviewNote(actor: CurrentUser, id: string, comment: str
     });
     if (!internal && expense.staffId !== actor.id) {
       await notifyUsers(tx, [expense.staffId], {
+        organisationId: actor.organisationId,
         type: "EXPENSE_NOTE",
         title: `Note from finance on your ${formatMoney(expense.amount)} expense`,
         body: comment.trim(),
@@ -862,6 +877,7 @@ export async function addExpenseComment(actor: CurrentUser, id: string, comment:
     });
     const recipient = expense.staffId === actor.id ? (expense.reviewedBy ? [expense.reviewedBy] : []) : [expense.staffId];
     await notifyUsers(tx, recipient, {
+      organisationId: actor.organisationId,
       type: "EXPENSE_COMMENT",
       title: `${actor.fullName} commented on ${expense.reference}`,
       body: comment.trim(),
@@ -932,6 +948,7 @@ export async function addExpenseDocuments(actor: CurrentUser, expenseId: string,
       comment: `${stored.length} file${stored.length === 1 ? "" : "s"} added${evidenceRequested ? " — sent back for review" : ""}`,
     });
     const n = {
+      organisationId: actor.organisationId,
       type: "EVIDENCE_ADDED",
       title: `${actor.fullName} added evidence to ${expense.reference}`,
       body: `${formatMoney(expense.amount)} — ${expense.description}${evidenceRequested ? ". It's back in the review queue." : ""}`,

@@ -3,13 +3,21 @@
 import { revalidatePath } from "next/cache";
 import { requireActor } from "@/lib/auth/current";
 import { type ActionResult, toActionError } from "@/lib/errors";
-import { createUser, resendLoginDetails, saveCategory, saveDepartment, saveProject, saveSettings, updateUser } from "@/lib/services/admin";
+import { createUser, resendInvite, resendLoginDetails, saveCategory, saveDepartment, saveProject, saveSettings, updateUser } from "@/lib/services/admin";
 import type { Role } from "@/db/schema";
 import { bool, money, opt, str } from "./_helpers";
 
 type Prev = ActionResult<unknown> | null;
 
-export type IssuedCredentials = { email: string; password: string | null; emailed: boolean | null; google: boolean };
+export type IssuedCredentials = {
+  email: string;
+  password: string | null;
+  emailed: boolean | null;
+  google: boolean;
+  /** An existing user was given access to more organisations. */
+  existing?: boolean;
+  organisations?: string[];
+};
 
 export async function saveUserAction(_: Prev, fd: FormData): Promise<ActionResult<IssuedCredentials>> {
   try {
@@ -26,6 +34,8 @@ export async function saveUserAction(_: Prev, fd: FormData): Promise<ActionResul
       password: opt(fd, "password"),
       status: (str(fd, "status") || "ACTIVE") as "ACTIVE" | "SUSPENDED",
       sendCredentials: bool(fd, "sendCredentials"),
+      organisationIds: fd.has("orgsShown") ? fd.getAll("organisationIds").map(String).filter(Boolean) : undefined,
+      isGroupAdmin: fd.has("groupAdminShown") ? bool(fd, "isGroupAdmin") : undefined,
     };
     if (id) {
       await updateUser(actor, id, input);
@@ -37,8 +47,12 @@ export async function saveUserAction(_: Prev, fd: FormData): Promise<ActionResul
     revalidatePath("/staff");
     return {
       ok: true,
-      message: r.google ? "User added. They sign in with Google." : r.emailed ? `Login details emailed to ${r.user.email}.` : "User added.",
-      data: { email: r.user.email, password: r.password, emailed: r.emailed, google: r.google },
+      message: r.existing
+        ? `${r.user.email} now has access to ${r.organisations.join(", ")}.`
+        : r.emailed
+          ? `Invitation emailed to ${r.user.email}.`
+          : "User invited.",
+      data: { email: r.user.email, password: r.password, emailed: r.emailed, google: r.google, existing: r.existing, organisations: r.organisations },
     };
   } catch (e) {
     return toActionError(e);
@@ -59,6 +73,16 @@ export async function resendLoginAction(_: Prev, fd: FormData): Promise<ActionRe
   }
 }
 
+export async function resendInviteAction(_: Prev, fd: FormData): Promise<ActionResult> {
+  try {
+    const actor = await requireActor();
+    await resendInvite(actor, str(fd, "userId"));
+    return { ok: true, message: "Invitation sent again." };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
 export async function saveCategoryAction(_: Prev, fd: FormData): Promise<ActionResult> {
   try {
     const actor = await requireActor("admin.config");
@@ -67,6 +91,7 @@ export async function saveCategoryAction(_: Prev, fd: FormData): Promise<ActionR
       description: opt(fd, "description"),
       keywords: opt(fd, "keywords"),
       receiptRequired: bool(fd, "receiptRequired"),
+      isOther: bool(fd, "isOther"),
       archived: bool(fd, "archived"),
     });
     revalidatePath("/admin/categories");

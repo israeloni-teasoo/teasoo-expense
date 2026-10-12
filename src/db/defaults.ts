@@ -1,7 +1,7 @@
 /** Reference data created for a new organisation (and by the demo seed). */
 export const DEFAULT_DEPARTMENTS = ["Finance", "Operations", "IT", "Marketing", "HR", "Administration"];
 
-export const DEFAULT_CATEGORIES: { name: string; keywords: string; receiptRequired?: boolean }[] = [
+export const DEFAULT_CATEGORIES: { name: string; keywords: string; receiptRequired?: boolean; isOther?: boolean; description?: string }[] = [
   { name: "Transportation", keywords: "transport,taxi,uber,bolt,fuel,bus,flight,fare,logistics van" },
   { name: "Accommodation", keywords: "hotel,lodging,airbnb,accommodation,room" },
   { name: "Meals", keywords: "lunch,dinner,breakfast,food,meal,catering,refreshment" },
@@ -16,5 +16,12 @@ export const DEFAULT_CATEGORIES: { name: string; keywords: string; receiptRequir
   { name: "Repairs", keywords: "repair,maintenance,fix,servicing" },
   { name: "Professional Services", keywords: "consultant,legal,audit,professional,contractor" },
   { name: "Utilities", keywords: "electricity,diesel,water,utility,nepa,generator" },
-  { name: "Miscellaneous", keywords: "misc,other,sundry", receiptRequired: false },
+  { name: "Miscellaneous", keywords: "misc,sundry", receiptRequired: false },
+  {
+    name: "Others",
+    keywords: "",
+    receiptRequired: false,
+    isOther: true,
+    description: "Anything not listed — type the category when recording",
+  },
 ];

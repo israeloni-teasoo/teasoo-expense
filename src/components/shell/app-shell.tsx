@@ -30,7 +30,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { Logo } from "./logo";
+import { OrgSwitcher, type SwitcherOrg } from "./org-switcher";
 import { NavigationProgress } from "./navigation-progress";
 import { FeedbackButton } from "@/components/forms/feedback-forms";
 import { PendingButton } from "@/components/ui/pending-button";
@@ -98,19 +98,19 @@ function SidebarContent({
   pathname,
   onNavigate,
   logoutAction,
+  org,
 }: {
   sections: NavSection[];
   user: { name: string; role: string; email: string };
   pathname: string;
   onNavigate?: () => void;
   logoutAction: () => Promise<void>;
+  org: OrgProps;
 }) {
   return (
     <div className="flex h-full flex-col bg-brand-900">
-      <div className="flex h-16 shrink-0 items-center px-5">
-        <Link href="/dashboard" onClick={onNavigate}>
-          <Logo light />
-        </Link>
+      <div className="flex h-16 shrink-0 items-center px-3 pr-10 lg:pr-3">
+        <OrgSwitcher orgs={org.orgs} activeId={org.activeId} manageHref={org.manageHref} variant="sidebar" />
       </div>
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-2 scrollbar-none">
         {sections.map((section, i) => (
@@ -148,12 +148,14 @@ function SidebarContent({
   );
 }
 
+type OrgProps = { orgs: SwitcherOrg[]; activeId: string; manageHref: string | null };
+
 export function AppShell({
   sections,
   bottomNav,
   user,
   unread,
-  orgName,
+  org,
   logoutAction,
   children,
 }: {
@@ -161,7 +163,7 @@ export function AppShell({
   bottomNav: NavItem[];
   user: { name: string; role: string; email: string };
   unread: number;
-  orgName: string;
+  org: OrgProps;
   logoutAction: () => Promise<void>;
   children: ReactNode;
 }) {
@@ -182,7 +184,7 @@ export function AppShell({
       </Suspense>
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">
-        <SidebarContent sections={sections} user={user} pathname={pathname} logoutAction={logoutAction} />
+        <SidebarContent sections={sections} user={user} pathname={pathname} logoutAction={logoutAction} org={org} />
       </aside>
 
       {/* Mobile drawer */}
@@ -192,7 +194,7 @@ export function AppShell({
           <button onClick={() => setDrawer(false)} className="absolute right-3 top-4 z-10 rounded-lg p-1.5 text-brand-200 hover:bg-brand-800" aria-label="Close menu">
             <X className="h-5 w-5" />
           </button>
-          <SidebarContent sections={sections} user={user} pathname={pathname} onNavigate={() => setDrawer(false)} logoutAction={logoutAction} />
+          <SidebarContent sections={sections} user={user} pathname={pathname} onNavigate={() => setDrawer(false)} logoutAction={logoutAction} org={org} />
         </div>
       </div>
 
@@ -203,10 +205,10 @@ export function AppShell({
             <button onClick={() => setDrawer(true)} className="-ml-1 rounded-lg p-1.5 text-gray-600 hover:bg-gray-100 lg:hidden" aria-label="Open menu">
               <Menu className="h-6 w-6" />
             </button>
-            <Link href="/dashboard" className="lg:hidden">
-              <Logo />
-            </Link>
-            <p className="hidden truncate text-sm font-medium text-gray-500 lg:block">{orgName}</p>
+            <div className="min-w-0 lg:hidden">
+              <OrgSwitcher orgs={org.orgs} activeId={org.activeId} manageHref={org.manageHref} variant="topbar" />
+            </div>
+            <p className="hidden truncate text-sm font-medium text-gray-500 lg:block">{org.orgs.find((o) => o.id === org.activeId)?.name}</p>
             <div className="ml-auto flex items-center gap-1 sm:gap-2">
               <FeedbackButton />
               <Link href="/notifications" className="relative rounded-full p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700" aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}>

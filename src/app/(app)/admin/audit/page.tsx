@@ -4,7 +4,7 @@ import Link from "next/link";
 import { and, desc, eq, gte, ilike, lte, or, sql, type SQL } from "drizzle-orm";
 import { Search } from "lucide-react";
 import { db } from "@/db";
-import { auditLogs, users } from "@/db/schema";
+import { auditLogs, memberships, users } from "@/db/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import { formatDateTime } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "Audit log" };
 
-const ENTITY_TYPES = ["ALLOCATION", "EXPENSE", "DOCUMENT", "RETURN", "CLAIM", "RECONCILIATION", "USER", "CATEGORY", "DEPARTMENT", "PROJECT", "SETTINGS", "AUTH", "EXPORT"];
+const ENTITY_TYPES = ["ALLOCATION", "EXPENSE", "DOCUMENT", "RETURN", "CLAIM", "RECONCILIATION", "USER", "CATEGORY", "DEPARTMENT", "PROJECT", "SETTINGS", "AUTH", "EXPORT", "FEEDBACK", "ORGANISATION"];
 const PAGE = 50;
 
 export default async function AuditPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
@@ -39,7 +39,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
       .limit(PAGE)
       .offset((page - 1) * PAGE),
     db.select({ n: sql<number>`count(*)::int` }).from(auditLogs).where(where),
-    db.select({ id: users.id, first: users.firstName, last: users.lastName }).from(users).where(eq(users.organisationId, user.organisationId)),
+    db.select({ id: users.id, first: users.firstName, last: users.lastName }).from(memberships).innerJoin(users, eq(users.id, memberships.userId)).where(eq(memberships.organisationId, user.organisationId)),
   ]);
   const pages = Math.max(1, Math.ceil(Number(count[0].n) / PAGE));
   const q = new URLSearchParams(Object.entries(sp).filter(([k, v]) => v && k !== "page") as [string, string][]);

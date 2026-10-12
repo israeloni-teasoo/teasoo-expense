@@ -73,7 +73,7 @@ async function main() {
 
   const cats = await db
     .insert(s.expenseCategories)
-    .values(DEFAULT_CATEGORIES.map((c) => ({ organisationId: O, name: c.name, keywords: c.keywords, receiptRequired: c.receiptRequired ?? true })))
+    .values(DEFAULT_CATEGORIES.map((c) => ({ organisationId: O, name: c.name, keywords: c.keywords || null, description: c.description ?? null, receiptRequired: c.receiptRequired ?? true, isOther: c.isOther ?? false })))
     .returning();
   const cat = (name: string) => cats.find((c) => c.name === name)!.id;
 
@@ -102,6 +102,9 @@ async function main() {
     .returning();
   const u = (email: string) => people.find((p) => p.email === email)!;
   const admin = u("admin@teasoo.test");
+  // Everyone belongs to the main organisation; the admin is a group admin (manages every company).
+  await db.insert(s.memberships).values(people.map((p) => ({ userId: p.id, organisationId: O, role: p.role, departmentId: p.departmentId })));
+  await db.update(s.users).set({ isGroupAdmin: true }).where(sql`${s.users.id} = ${admin.id}`);
   const accountant = u("accountant@teasoo.test");
 
   const logAudit = (v: Omit<typeof s.auditLogs.$inferInsert, "organisationId">) => db.insert(s.auditLogs).values({ organisationId: O, ...v });
@@ -170,6 +173,7 @@ async function main() {
       createdAt: at(opts.received, 9),
     });
     await db.insert(s.notifications).values({
+      organisationId: O,
       userId: opts.staff.id,
       type: "FUNDS_ASSIGNED",
       title: `New funds assigned: ₦${(opts.amount / 100).toLocaleString("en-NG")}`,
@@ -225,6 +229,7 @@ async function main() {
         await logAudit({ userId: accountant.id, entityType: "EXPENSE", entityId: row.id, entityRef: reference, allocationId: a.id, action, summary: `Ngozi Okafor ${verb} ${money} expense — ${e.desc}${e.comment ? ` ("${e.comment}")` : ""}`, createdAt: at(e.offset + 1, 14) });
         if (action !== "APPROVED" || e.offset > -3) {
           await db.insert(s.notifications).values({
+            organisationId: O,
             userId: opts.staff.id,
             type: `EXPENSE_${action === "REQUEST_CLARIFICATION" ? "CLARIFY" : action === "REJECTED" ? "REJECT" : "APPROVE"}`,
             title: action === "APPROVED" ? `Expense approved: ${money}` : action === "REJECTED" ? `Expense needs correction: ${money}` : `Question about your ${money} expense`,
@@ -236,7 +241,7 @@ async function main() {
       }
       if (e.status === "SUBMITTED") {
         for (const fin of [accountant, admin]) {
-          await db.insert(s.notifications).values({ userId: fin.id, type: "EXPENSE_SUBMITTED", title: `${name} submitted ${money}`, body: `${e.desc} — ${opts.purpose}`, link: `/expenses/${row.id}`, createdAt: at(e.offset, 11) });
+          await db.insert(s.notifications).values({ organisationId: O, userId: fin.id, type: "EXPENSE_SUBMITTED", title: `${name} submitted ${money}`, body: `${e.desc} — ${opts.purpose}`, link: `/expenses/${row.id}`, createdAt: at(e.offset, 11) });
         }
       }
     }
@@ -396,12 +401,88 @@ async function main() {
     expenses: [{ offset: -5, cat: "Utilities", desc: "Generator repair and diesel top-up", vendor: "Mikano", amount: N(42_000), status: "SUBMITTED", method: "Cash" }],
   });
 
+  // A subsidiary with its own people and funds. Tolu (admin), Ngozi (accountant) and Israel (staff)
+  // work in both companies; Kemi only in the subsidiary.
+  const [sub] = await db.insert(s.organisations).values({ name: "Teasoo Logistics Ltd", currency: "NGN" }).returning();
+  const subDepts = await db
+    .insert(s.departments)
+    .values(DEFAULT_DEPARTMENTS.map((name) => ({ organisationId: sub.id, name, code: name.slice(0, 3).toUpperCase() })))
+    .returning();
+  const subCats = await db
+    .insert(s.expenseCategories)
+    .values(DEFAULT_CATEGORIES.map((c) => ({ organisationId: sub.id, name: c.name, keywords: c.keywords || null, description: c.description ?? null, receiptRequired: c.receiptRequired ?? true, isOther: c.isOther ?? false })))
+    .returning();
+  const [kemi] = await db
+    .insert(s.users)
+    .values({ organisationId: sub.id, firstName: "Kemi", lastName: "Adewale", email: "kemi@teasoo.test", role: "STAFF", jobTitle: "Fleet Coordinator", passwordHash })
+    .returning();
+  people.push(kemi);
+  const subOps = subDepts.find((d) => d.name === "Operations")!.id;
+  await db.insert(s.memberships).values([
+    { userId: admin.id, organisationId: sub.id, role: "ADMIN" },
+    { userId: accountant.id, organisationId: sub.id, role: "ACCOUNTANT", departmentId: subDepts.find((d) => d.name === "Finance")!.id },
+    { userId: israel.id, organisationId: sub.id, role: "STAFF", departmentId: subOps },
+    { userId: kemi.id, organisationId: sub.id, role: "STAFF", departmentId: subOps },
+  ]);
+  for (const [staff, amount, purpose] of [
+    [kemi, N(400_000), "Fleet fuel and maintenance — October"],
+    [israel, N(150_000), "Warehouse inspection trip"],
+  ] as const) {
+    const dateReceived = day(-6);
+    const reference = ref("AL", dateReceived);
+    const [a] = await db
+      .insert(s.allocations)
+      .values({
+        organisationId: sub.id,
+        reference,
+        staffId: staff.id,
+        departmentId: subOps,
+        purpose,
+        initialAmount: amount,
+        dateReceived,
+        expectedCompletionDate: day(14),
+        fundingSource: "Logistics operating account",
+        createdBy: accountant.id,
+        createdAt: at(-6, 10),
+      })
+      .returning();
+    await db.insert(s.auditLogs).values({
+      organisationId: sub.id,
+      userId: accountant.id,
+      entityType: "ALLOCATION",
+      entityId: a.id,
+      entityRef: reference,
+      allocationId: a.id,
+      action: "CREATED",
+      summary: `Ngozi Okafor created allocation ${reference} of ₦${(amount / 100).toLocaleString("en-NG")} for ${staff.firstName} ${staff.lastName} — ${purpose}`,
+      createdAt: at(-6, 10),
+    });
+    if (staff.id === kemi.id) {
+      const expenseDate = day(-3);
+      await db.insert(s.expenses).values({
+        reference: ref("EXP", expenseDate),
+        allocationId: a.id,
+        staffId: kemi.id,
+        categoryId: subCats.find((c) => c.name === "Transportation")!.id,
+        departmentId: subOps,
+        expenseDate,
+        amount: N(85_000),
+        vendor: "Total Energies",
+        description: "Diesel for delivery trucks",
+        paymentMethod: "Debit card",
+        status: "SUBMITTED",
+        submittedAt: at(-3, 16),
+        createdAt: at(-3, 16),
+      });
+    }
+  }
+
   // Make sure the counters table continues from the seeded references.
   for (const [key, value] of counters) {
     await db.insert(s.counters).values({ key, value }).onConflictDoUpdate({ target: s.counters.key, set: { value } });
   }
 
-  console.log("Seeded demo organisation. Sign in with any of:");
+  console.log("Seeded demo organisations (Teasoo Consulting + Teasoo Logistics Ltd). Sign in with any of:");
   for (const p of people) console.log(`  ${p.role.padEnd(10)} ${p.email}  /  Password123`);
   await pool.end();
 }

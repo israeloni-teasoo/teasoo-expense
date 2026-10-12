@@ -26,12 +26,13 @@ export type FundOption = {
   projectId: string | null;
 };
 
-type Category = { id: string; name: string; keywords: string | null; receiptRequired: boolean };
+type Category = { id: string; name: string; keywords: string | null; receiptRequired: boolean; isOther?: boolean };
 
 export type ExpenseFormValues = {
   id?: string;
   allocationId?: string;
   categoryId?: string;
+  categoryOther?: string | null;
   projectId?: string | null;
   expenseDate: string;
   amount?: number;
@@ -118,6 +119,7 @@ function Steps({
   const [description, setDescription] = useState(initial.description ?? "");
   const [categoryId, setCategoryId] = useState(initial.categoryId ?? "");
   const [categoryTouched, setCategoryTouched] = useState(!!initial.categoryId);
+  const [categoryOther, setCategoryOther] = useState(initial.categoryOther ?? "");
   const [vendor, setVendor] = useState(initial.vendor ?? "");
   const [expenseDate, setExpenseDate] = useState(initial.expenseDate);
   const [projectId, setProjectId] = useState(initial.projectId ?? "");
@@ -144,7 +146,13 @@ function Steps({
   }
   const amount = parseMoney(amountText);
   const category = categories.find((c) => c.id === categoryId);
-  const suggested = useMemo(() => (description.length > 3 ? suggestCategory(description, categories) : null), [description, categories]);
+  // "Others" goes last in the list and is never auto-suggested.
+  const orderedCategories = useMemo(() => [...categories.filter((c) => !c.isOther), ...categories.filter((c) => c.isOther)], [categories]);
+  const suggested = useMemo(
+    () => (description.length > 3 ? suggestCategory(description, categories.filter((c) => !c.isOther)) : null),
+    [description, categories],
+  );
+  const categoryText = category?.isOther && categoryOther.trim() ? `${category.name}: ${categoryOther.trim()}` : category?.name;
   const reserved = initial.allocationId === allocationId ? (initial.reserved ?? 0) : 0;
   const availableBefore = fund ? fund.available + reserved : 0;
   const remainingAfter = availableBefore - (amount ?? 0);
@@ -156,7 +164,7 @@ function Steps({
   const errorStep = fieldErrors
     ? fieldErrors.allocationId
       ? 0
-      : ["amount", "categoryId", "description", "expenseDate"].some((k) => fieldErrors[k])
+      : ["amount", "categoryId", "categoryOther", "description", "expenseDate"].some((k) => fieldErrors[k])
         ? 1
         : fieldErrors.receipts
           ? 2
@@ -228,6 +236,7 @@ function Steps({
       if (!amount || amount <= 0) return setLocalError("Enter the amount you spent.");
       if (!description.trim()) return setLocalError("Describe what the money was spent on.");
       if (!categoryId) return setLocalError("Choose a category.");
+      if (category?.isOther && !categoryOther.trim()) return setLocalError("Type the category for this expense.");
       if (!expenseDate) return setLocalError("Enter the date of the expense.");
       if (expenseDate > today) return setLocalError("Expense date cannot be in the future.");
     }
@@ -332,9 +341,9 @@ function Steps({
             }}
           >
             <option value="">Choose a category…</option>
-            {categories.map((c) => (
+            {orderedCategories.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name}
+                {c.isOther ? `${c.name} (not listed)` : c.name}
               </option>
             ))}
           </Select>
@@ -352,6 +361,19 @@ function Steps({
             </button>
           )}
         </FormField>
+        {category?.isOther && (
+          <FormField name="categoryOther" label="What category is it?" required hint="e.g. Gifts, Medical, Visa fees">
+            <Input
+              id="categoryOther"
+              name="categoryOther"
+              value={categoryOther}
+              onChange={(e) => setCategoryOther(e.target.value)}
+              maxLength={60}
+              autoComplete="off"
+              autoFocus={categoryTouched}
+            />
+          </FormField>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField name="vendor" label="Vendor / paid to">
             <Input id="vendor" name="vendor" value={vendor} onChange={(e) => setVendor(e.target.value)} />
@@ -475,7 +497,7 @@ function Steps({
             ["Fund", fund?.purpose ?? "—"],
             ["Expense", amount ? formatMoney(amount) : "—"],
             ["Date", expenseDate],
-            ["Category", category?.name ?? "—"],
+            ["Category", categoryText ?? "—"],
             ["Description", description || "—"],
             ["Vendor", vendor || "—"],
             ["Evidence", docCount ? `${docCount} file${docCount === 1 ? "" : "s"}` : "No receipt attached"],

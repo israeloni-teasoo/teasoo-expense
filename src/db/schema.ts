@@ -129,6 +129,11 @@ export const organisations = pgTable("organisations", {
   currency: text("currency").notNull().default("NGN"),
   settings: jsonb("settings").$type<OrgSettings>().notNull().default(DEFAULT_ORG_SETTINGS),
   lastSweepAt: timestamp("last_sweep_at", { withTimezone: true }),
+  /** Storage key of the organisation's logo (served through /api/organisations/[id]/logo). */
+  logoKey: text("logo_key"),
+  logoType: text("logo_type"),
+  /** Archived organisations are hidden from the switcher and can't be signed into. */
+  archived: boolean("archived").notNull().default(false),
   ...timestamps,
 });
 
@@ -168,9 +173,37 @@ export const users = pgTable(
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     resetTokenHash: text("reset_token_hash"),
     resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+    /** Group admins manage every organisation (create subsidiaries, invite into any of them). */
+    isGroupAdmin: boolean("is_group_admin").notNull().default(false),
+    invitedAt: timestamp("invited_at", { withTimezone: true }),
+    invitedBy: uuid("invited_by"),
     ...timestamps,
   },
   (t) => [uniqueIndex("users_email_idx").on(sql`lower(${t.email})`)],
+);
+
+/**
+ * A person's access to one organisation. Role, department and status are per organisation,
+ * so the same person can be staff in one subsidiary and an accountant in another.
+ * (users.organisationId / role / departmentId hold the defaults from when they were first invited.)
+ */
+export const memberships = pgTable(
+  "memberships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    role: roleEnum("role").notNull().default("STAFF"),
+    departmentId: uuid("department_id").references(() => departments.id),
+    status: userStatusEnum("status").notNull().default("ACTIVE"),
+    invitedBy: uuid("invited_by").references(() => users.id),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("memberships_user_org_idx").on(t.userId, t.organisationId), index("memberships_org_idx").on(t.organisationId)],
 );
 
 export const projects = pgTable("projects", {
@@ -199,6 +232,8 @@ export const expenseCategories = pgTable("expense_categories", {
   /** Comma-separated keywords used for smart category suggestions. */
   keywords: text("keywords"),
   receiptRequired: boolean("receipt_required").notNull().default(true),
+  /** The "Others" category: staff type the real category in expenses.categoryOther. */
+  isOther: boolean("is_other").notNull().default(false),
   archived: boolean("archived").notNull().default(false),
   ...timestamps,
 });
@@ -275,6 +310,8 @@ export const expenses = pgTable(
     currency: text("currency").notNull().default("NGN"),
     vendor: text("vendor"),
     description: text("description").notNull(),
+    /** Free-text category typed by staff when the "Others" category is chosen. */
+    categoryOther: text("category_other"),
     paymentMethod: text("payment_method"),
     paymentReference: text("payment_reference"),
     notes: text("notes"),
@@ -426,6 +463,8 @@ export const notifications = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),
+    /** Organisation the notification belongs to (links open in that organisation). */
+    organisationId: uuid("organisation_id").references(() => organisations.id),
     type: text("type").notNull(),
     title: text("title").notNull(),
     body: text("body"),
@@ -480,3 +519,5 @@ export type Category = typeof expenseCategories.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type Department = typeof departments.$inferSelect;
 export type Feedback = typeof feedback.$inferSelect;
+export type Organisation = typeof organisations.$inferSelect;
+export type Membership = typeof memberships.$inferSelect;

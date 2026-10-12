@@ -2,8 +2,9 @@ import "server-only";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { db } from "@/db";
-import { users, type User } from "@/db/schema";
+import { memberships, users, type User } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { accessibleOrganisations } from "@/lib/auth/current";
 import type { GoogleIdentity } from "@/lib/auth/google";
 import { createResetToken, hashPassword, hashToken, passwordProblem, verifyPassword } from "@/lib/auth/password";
 import { rateLimit, resetRateLimit } from "@/lib/auth/rate-limit";
@@ -11,7 +12,6 @@ import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/auth/ses
 import { config, googleEnabled, isCompanyEmail } from "@/lib/config";
 import { resetEmail, sendEmail } from "@/lib/email";
 import { DomainError } from "@/lib/errors";
-import { notifyRoles } from "@/lib/notify";
 import { requestMeta } from "@/lib/request-context";
 import { ensureOrganisation } from "./bootstrap";
 
@@ -62,57 +62,64 @@ export async function login(emailRaw: string, password: string) {
     throw new DomainError("Incorrect email or password.");
   }
   if (user.status !== "ACTIVE") throw new DomainError("Your account is suspended. Contact your administrator.");
+  if (!(await accessibleOrganisations(user)).length) throw new DomainError(NO_ACCESS);
   resetRateLimit(limitKey);
   await startSession(user, "password");
   return user;
 }
 
+const NOT_INVITED = "You haven't been invited yet. Ask an administrator or accountant to add you to your company.";
+const NO_ACCESS = "You don't have access to any organisation at the moment. Contact your administrator.";
+
 /**
- * Google sign-in for the company domain. Existing users are matched by Google account id, then
- * by email; anyone else on the domain is let in automatically as Staff (or as an administrator
- * when listed in BOOTSTRAP_ADMIN_EMAILS).
+ * Google sign-in. Access is by invitation only: the person must already have been added by an
+ * administrator or accountant (matched by Google account id, then by email). The only exception
+ * is BOOTSTRAP_ADMIN_EMAILS, who become group administrators so a fresh installation can be set up.
  */
 export async function signInWithGoogle(identity: GoogleIdentity) {
-  const org = await ensureOrganisation();
+  const bootstrap = config.bootstrapAdmins.includes(identity.email);
   let user =
     (await db.query.users.findFirst({ where: eq(users.googleSub, identity.sub) })) ??
     (await db.query.users.findFirst({ where: sql`lower(${users.email}) = ${identity.email}` }));
 
   if (user) {
     if (user.status !== "ACTIVE") throw new DomainError("Your account is suspended. Contact your administrator.");
-    if (!user.googleSub) {
-      [user] = await db.update(users).set({ googleSub: identity.sub }).where(eq(users.id, user.id)).returning();
-    }
-  } else {
-    const role = config.bootstrapAdmins.includes(identity.email) ? "ADMIN" : "STAFF";
-    [user] = await db
-      .insert(users)
-      .values({
+    const updates: Partial<typeof users.$inferInsert> = {};
+    if (!user.googleSub) updates.googleSub = identity.sub;
+    if (bootstrap && !user.isGroupAdmin) updates.isGroupAdmin = true;
+    if (Object.keys(updates).length) [user] = await db.update(users).set(updates).where(eq(users.id, user.id)).returning();
+  } else if (bootstrap) {
+    const org = await ensureOrganisation();
+    user = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(users)
+        .values({
+          organisationId: org.id,
+          email: identity.email,
+          firstName: identity.firstName,
+          lastName: identity.lastName,
+          googleSub: identity.sub,
+          role: "ADMIN",
+          isGroupAdmin: true,
+          passwordHash: null,
+        })
+        .returning();
+      await tx.insert(memberships).values({ userId: created.id, organisationId: org.id, role: "ADMIN" });
+      await audit(tx, {
         organisationId: org.id,
-        email: identity.email,
-        firstName: identity.firstName,
-        lastName: identity.lastName,
-        googleSub: identity.sub,
-        role,
-        passwordHash: null,
-      })
-      .returning();
-    await audit(db, {
-      organisationId: org.id,
-      userId: user.id,
-      entityType: "USER",
-      entityId: user.id,
-      entityRef: user.email,
-      action: "CREATED",
-      summary: `${user.firstName} ${user.lastName} joined with Google as ${role === "ADMIN" ? "an administrator" : "staff"}`,
+        userId: created.id,
+        entityType: "USER",
+        entityId: created.id,
+        entityRef: created.email,
+        action: "CREATED",
+        summary: `${created.firstName} ${created.lastName} joined with Google as a group administrator (bootstrap)`,
+      });
+      return created;
     });
-    await notifyRoles(db, org.id, ["ADMIN"], {
-      type: "USER_JOINED",
-      title: `${user.firstName} ${user.lastName} joined as ${role === "ADMIN" ? "an administrator" : "staff"}`,
-      body: `${user.email} signed in with Google for the first time. Set their department or role from Users if needed.`,
-      link: "/admin/users",
-    }, user.id);
+  } else {
+    throw new DomainError(NOT_INVITED);
   }
+  if (!(await accessibleOrganisations(user)).length) throw new DomainError(NO_ACCESS);
   await startSession(user, "google");
   return user;
 }

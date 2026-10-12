@@ -213,6 +213,7 @@ export async function decideClaim(
     }
     if (decision !== "CANCEL") {
       await notifyUsers(tx, [claim.staffId], {
+        organisationId: actor.organisationId,
         type: `CLAIM_${status}`,
         title: `Your ${formatMoney(claim.amount)} claim was ${verb}`,
         body: comment?.trim() || claim.reason,

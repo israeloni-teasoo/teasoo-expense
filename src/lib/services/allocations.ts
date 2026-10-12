@@ -11,6 +11,7 @@ import {
   expenseCategories,
   expenses,
   fundReturns,
+  memberships,
   projects,
   reconciliations,
   users,
@@ -30,6 +31,7 @@ import { nextReference } from "@/lib/refs";
 import { storeUpload } from "@/lib/storage";
 import { loadBalance, loadBalances } from "./balances";
 import { getSettings } from "./org";
+import { categoryLabelSql } from "@/lib/category-label";
 
 export function canViewAllocation(actor: CurrentUser, allocation: Pick<Allocation, "staffId">) {
   return allocation.staffId === actor.id || can(actor.role, "allocations.viewAll");
@@ -137,7 +139,7 @@ export async function getAllocationDetail(actor: CurrentUser, id: string) {
       db
         .select({
           expense: expenses,
-          categoryName: expenseCategories.name,
+          categoryName: categoryLabelSql,
           reviewerFirst: reviewer.firstName,
           reviewerLast: reviewer.lastName,
           docCount: sql<number>`(select count(*)::int from ${documents} where ${documents.expenseId} = ${expenses.id} and ${documents.deletedAt} is null)`,
@@ -244,9 +246,16 @@ export async function createAllocation(actor: CurrentUser, input: CreateAllocati
     fieldErrors.expectedCompletionDate = "Expected completion must be on or after the date received.";
   if (Object.keys(fieldErrors).length) throw new DomainError("Please correct the highlighted fields.", "VALIDATION", fieldErrors);
 
-  const staff = await db.query.users.findFirst({ where: and(eq(users.id, input.staffId), eq(users.organisationId, actor.organisationId)) });
-  if (!staff || staff.status !== "ACTIVE") throw new DomainError("That staff member is not active.", "VALIDATION", { staffId: "Choose an active staff member." });
-  if (staff.role === "MANAGEMENT") throw new DomainError("Management accounts are read-only and cannot hold allocations.", "VALIDATION");
+  const [member] = await db
+    .select({ user: users, role: memberships.role, status: memberships.status })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(and(eq(memberships.userId, input.staffId), eq(memberships.organisationId, actor.organisationId)))
+    .limit(1);
+  const staff = member?.user;
+  if (!staff || staff.status !== "ACTIVE" || member.status !== "ACTIVE")
+    throw new DomainError("That staff member is not active.", "VALIDATION", { staffId: "Choose an active staff member." });
+  if (member.role === "MANAGEMENT") throw new DomainError("Management accounts are read-only and cannot hold allocations.", "VALIDATION");
 
   const settings = await getSettings(actor.organisationId);
   const stored = transferReceipt && transferReceipt.size > 0 ? await storeUpload(transferReceipt, settings.maxUploadMb) : null;
@@ -294,6 +303,7 @@ export async function createAllocation(actor: CurrentUser, input: CreateAllocati
       newValues: { amount: input.amount, purpose: row.purpose, staffId: staff.id, dateReceived: row.dateReceived },
     });
     await notifyUsers(tx, [staff.id], {
+      organisationId: actor.organisationId,
       type: "FUNDS_ASSIGNED",
       title: `New funds assigned: ${formatMoney(input.amount)}`,
       body: `${row.purpose}. Log your expenses against ${reference} as you spend.`,
@@ -426,6 +436,7 @@ export async function addAdjustment(
     });
     if (allocation.staffId !== actor.id) {
       await notifyUsers(tx, [allocation.staffId], {
+        organisationId: actor.organisationId,
         type: "FUNDS_ADDED",
         title: `${formatMoney(input.amount, { sign: true })} ${label} on ${allocation.purpose}`,
         body: input.reason.trim(),
@@ -498,6 +509,7 @@ export async function recordReturn(
       newValues: { amount: input.amount, returnDate: input.returnDate, method: input.paymentMethod, reference: input.reference },
     });
     await notifyUsers(tx, [allocation.staffId], {
+      organisationId: actor.organisationId,
       type: "RETURN_RECORDED",
       title: `Return of ${formatMoney(input.amount)} recorded`,
       body: `Against ${allocation.purpose} (${allocation.reference}).`,
@@ -567,6 +579,7 @@ export async function reconcileAllocation(actor: CurrentUser, id: string, notes?
       newValues: { status: "RECONCILED", ...balance },
     });
     await notifyUsers(tx, [allocation.staffId], {
+      organisationId: actor.organisationId,
       type: "RECONCILED",
       title: `${allocation.purpose} is fully reconciled`,
       body: `Thank you — every naira of ${allocation.reference} has been accounted for.`,
@@ -719,6 +732,7 @@ export async function settlePersonalSpend(actor: CurrentUser, personalId: string
       newValues: { amount: input.amount, method: input.method, source: source?.reference ?? null, reference: ref },
     });
     await notifyUsers(tx, [personal.staffId], {
+      organisationId: actor.organisationId,
       type: "PERSONAL_SPEND_SETTLED",
       title: `${formatMoney(input.amount)} of your personal spend has been settled`,
       body: source
