@@ -195,6 +195,108 @@ await p.waitForTimeout(1500);
 await p.goto(johnAlloc + "?tab=funding", { waitUntil: "networkidle" });
 ok(await p.getByText("Reimbursement", { exact: true }).first().isVisible(), "approved claim added a reimbursement adjustment to the allocation");
 
+
+// ---- Optional evidence, evidence requests, notes ----
+{
+  // Funded expense can be submitted without a receipt
+  const sp = staff.page;
+  await sp.goto(BASE + "/expenses/new", { waitUntil: "networkidle" });
+  await sp.getByText("Staff Training Logistics").click();
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.fill("#amount", "7,250");
+  await sp.fill("#description", "Projector cable for training room");
+  await sp.selectOption("#categoryId", { label: "Equipment" });
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  ok(await sp.getByText(/Optional — attach it now/).isVisible(), "evidence step says the receipt is optional for funded expenses");
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.getByRole("button", { name: /Submit expense/ }).click();
+  await sp.waitForURL(/\/expenses\/[0-9a-f-]{36}$/, { timeout: 20000 });
+  const noReceiptUrl = sp.url();
+  ok(await sp.getByRole("button", { name: "Add receipt" }).isVisible(), "expense submitted without a receipt; staff can add it later");
+
+  // Accountant requests evidence with a note
+  const ap = acct.page;
+  await ap.goto(noReceiptUrl, { waitUntil: "networkidle" });
+  ok(await ap.getByText("No receipt is attached to this expense.").isVisible(), "reviewer is told the receipt is missing");
+  await ap.getByRole("radio", { name: "Request evidence" }).click();
+  await ap.fill("#comment", "Please upload the Jumia invoice.");
+  await ap.getByRole("button", { name: "Request evidence" }).last().click();
+  await ap.waitForURL(/\/review/, { timeout: 15000 });
+
+  // Staff sees the request and uploads the receipt → back in the queue
+  await sp.goto(noReceiptUrl, { waitUntil: "networkidle" });
+  ok(await sp.getByText(/requested evidence/).first().isVisible() && await sp.getByText("“Please upload the Jumia invoice.”").isVisible(), "staff sees the evidence request and message");
+  await sp.getByRole("button", { name: "Upload receipt" }).first().click();
+  await sp.locator('input[name="files"]').setInputFiles(png);
+  await sp.getByRole("button", { name: "Upload", exact: true }).click();
+  await sp.getByText(/back with finance for review/).waitFor({ timeout: 15000 });
+  await sp.reload({ waitUntil: "networkidle" });
+  ok(await sp.getByText("Pending", { exact: true }).first().isVisible(), "uploading the requested receipt sends the expense back for review");
+
+  // Internal vs visible notes
+  await ap.goto(noReceiptUrl, { waitUntil: "networkidle" });
+  await ap.getByRole("radio", { name: "Add note" }).click();
+  await ap.fill("#comment", "Internal: cross-check against the Jumia statement.");
+  await ap.getByLabel(/Internal — visible to finance only/).check();
+  await ap.getByRole("button", { name: "Add note" }).last().click();
+  await ap.getByText("Internal note added.").waitFor({ timeout: 10000 });
+  await ap.getByRole("radio", { name: "Add note" }).click();
+  await ap.fill("#comment", "Approving once the statement matches.");
+  await ap.getByRole("button", { name: "Add note" }).last().click();
+  await ap.getByText(/Note added/).waitFor({ timeout: 10000 });
+  await sp.reload({ waitUntil: "networkidle" });
+  ok((await sp.getByText("Internal: cross-check").count()) === 0 && (await sp.getByText("Approving once the statement matches.").count()) === 1, "staff sees visible notes but not internal ones");
+
+  // Personal spend still requires a receipt
+  await sp.goto(BASE + "/funds", { waitUntil: "networkidle" });
+  await sp.getByRole("button", { name: "Log personal spend" }).click();
+  await sp.fill("#purpose", "Taxi to client meeting (paid myself)");
+  await sp.getByRole("button", { name: "Continue to add expenses" }).click();
+  await sp.waitForURL(/\/expenses\/new\?allocation=/, { timeout: 15000 });
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.fill("#amount", "6000");
+  await sp.fill("#description", "Taxi to client meeting");
+  await sp.selectOption("#categoryId", { label: "Transportation" });
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.getByRole("button", { name: /Submit expense/ }).click();
+  await sp.getByText(/Personal-spend claims need a receipt/).first().waitFor({ timeout: 15000 });
+  ok(true, "personal-spend expenses still require a receipt");
+}
+
+// ---- Feedback ----
+{
+  const sp = staff.page;
+  await sp.goto(BASE + "/dashboard", { waitUntil: "networkidle" });
+  await sp.getByRole("button", { name: "Send feedback" }).click();
+  await sp.selectOption("#category", "BUG");
+  await sp.fill("#subject", "Export menu hard to find");
+  await sp.fill("#message", "On my phone I couldn't find where to download my expenses.");
+  await sp.locator('input[name="screenshots"]').setInputFiles(png);
+  await sp.getByRole("button", { name: "Send feedback" }).last().click();
+  await sp.getByText(/your feedback has been sent/).waitFor({ timeout: 15000 });
+  ok(true, "staff sent feedback with a screenshot from the top-bar button");
+
+  const adm = await session("admin@teasoo.test");
+  await adm.page.goto(BASE + "/admin/feedback", { waitUntil: "networkidle" });
+  ok(await adm.page.getByText("Export menu hard to find").isVisible() && (await adm.page.getByText("/dashboard").count()) > 0, "admin sees the feedback with the page it was sent from");
+  await adm.page.getByRole("button", { name: "Respond" }).first().click();
+  await adm.page.selectOption("#status", "RESOLVED");
+  await adm.page.fill("#response", "Thanks! It's under Expenses → Export.");
+  await adm.page.getByRole("button", { name: "Save" }).last().click();
+  await adm.page.getByText(/sender has been notified/).waitFor({ timeout: 15000 });
+  await sp.goto(BASE + "/feedback", { waitUntil: "networkidle" });
+  ok(await sp.getByText("Thanks! It's under Expenses → Export.").isVisible() && await sp.getByText("Resolved").first().isVisible(), "staff sees the admin's reply and resolved status");
+
+  if (process.env.SMOKE_STORAGE_TEST === "1") {
+    await adm.page.goto(BASE + "/admin/settings", { waitUntil: "networkidle" });
+    await adm.page.getByRole("button", { name: "Test storage" }).click();
+    await adm.page.getByText(/Storage is working|Storage test failed/).first().waitFor({ timeout: 20000 });
+    ok(await adm.page.getByText(/Storage is working/).first().isVisible(), "admin storage test passes");
+  }
+  await adm.ctx.close();
+}
+
 // ---- Ad-hoc staff: accountant adds someone without a company email ----
 p = acct.page;
 await p.goto(BASE + "/admin/users", { waitUntil: "networkidle" });

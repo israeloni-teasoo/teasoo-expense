@@ -128,3 +128,25 @@ export async function saveSettingsAction(_: Prev, fd: FormData): Promise<ActionR
     return toActionError(e);
   }
 }
+
+export async function testStorageAction(): Promise<ActionResult> {
+  try {
+    await requireActor("admin.config");
+    const { testStorage } = await import("@/lib/storage");
+    const r = await testStorage();
+    return r.ok ? { ok: true, message: r.message } : { ok: false, error: r.message };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function testEmailAction(): Promise<ActionResult> {
+  try {
+    const actor = await requireActor("admin.config");
+    const { sendEmail, notificationEmail } = await import("@/lib/email");
+    const r = await sendEmail({ to: actor.email, ...notificationEmail({ title: "Test email from Teasoo Funds & Expenses", body: "If you can read this, email notifications are working.", link: "/admin/settings" }) });
+    return r.ok ? { ok: true, message: `Test email sent to ${actor.email}.` } : { ok: false, error: r.error ?? "Email failed." };
+  } catch (e) {
+    return toActionError(e);
+  }
+}

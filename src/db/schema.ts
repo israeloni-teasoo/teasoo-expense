@@ -60,6 +60,8 @@ export const reviewActionEnum = pgEnum("review_action", [
   "APPROVED",
   "REJECTED",
   "REQUEST_CLARIFICATION",
+  "REQUEST_EVIDENCE",
+  "EVIDENCE_ADDED",
   "COMMENT",
   "VOIDED",
 ]);
@@ -69,7 +71,10 @@ export const documentKindEnum = pgEnum("document_kind", [
   "TRANSFER_RECEIPT",
   "RETURN_EVIDENCE",
   "AUTHORIZATION",
+  "SCREENSHOT",
 ]);
+export const feedbackCategoryEnum = pgEnum("feedback_category", ["BUG", "IDEA", "QUESTION", "OTHER"]);
+export const feedbackStatusEnum = pgEnum("feedback_status", ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]);
 export const claimTypeEnum = pgEnum("claim_type", ["ADDITIONAL_FUNDS", "REIMBURSEMENT"]);
 export const claimStatusEnum = pgEnum("claim_status", [
   "SUBMITTED",
@@ -88,6 +93,8 @@ export type ReviewAction = (typeof reviewActionEnum.enumValues)[number];
 export type DocumentKind = (typeof documentKindEnum.enumValues)[number];
 export type ClaimType = (typeof claimTypeEnum.enumValues)[number];
 export type ClaimStatus = (typeof claimStatusEnum.enumValues)[number];
+export type FeedbackCategory = (typeof feedbackCategoryEnum.enumValues)[number];
+export type FeedbackStatus = (typeof feedbackStatusEnum.enumValues)[number];
 
 export type OrgSettings = {
   /** Block expenses that exceed the available balance instead of flagging them as over budget. */
@@ -96,7 +103,7 @@ export type OrgSettings = {
   duplicateDetection: boolean;
   /** Reject expense dates in the future. */
   blockFutureDates: boolean;
-  /** Require at least one receipt before an expense can be submitted. */
+  /** Require receipts at submission for funded expenses in categories marked "receipt required" (personal spend always requires one). */
   requireReceipt: boolean;
   /** Maximum upload size in megabytes. */
   maxUploadMb: number;
@@ -110,7 +117,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   blockOverspend: false,
   duplicateDetection: true,
   blockFutureDates: true,
-  requireReceipt: true,
+  requireReceipt: false,
   maxUploadMb: 4,
   nearDepletionPercent: 80,
   unusualMultiplier: 3,
@@ -326,6 +333,32 @@ export const claims = pgTable("claims", {
   ...timestamps,
 });
 
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    category: feedbackCategoryEnum("category").notNull().default("OTHER"),
+    subject: text("subject").notNull(),
+    message: text("message").notNull(),
+    /** Page the person was on when they sent it. */
+    pageUrl: text("page_url"),
+    userAgent: text("user_agent"),
+    status: feedbackStatusEnum("status").notNull().default("OPEN"),
+    response: text("response"),
+    respondedBy: uuid("responded_by").references(() => users.id),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [index("feedback_status_idx").on(t.organisationId, t.status)],
+);
+
 export const documents = pgTable(
   "documents",
   {
@@ -338,6 +371,7 @@ export const documents = pgTable(
     allocationId: uuid("allocation_id").references(() => allocations.id),
     fundReturnId: uuid("fund_return_id").references(() => fundReturns.id),
     claimId: uuid("claim_id").references(() => claims.id),
+    feedbackId: uuid("feedback_id").references(() => feedback.id),
     fileName: text("file_name").notNull(),
     fileType: text("file_type").notNull(),
     fileSize: integer("file_size").notNull(),
@@ -362,6 +396,8 @@ export const expenseReviews = pgTable("expense_reviews", {
     .references(() => users.id),
   action: reviewActionEnum("action").notNull(),
   comment: text("comment"),
+  /** Finance-only note, hidden from the staff member. */
+  internal: boolean("internal").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -443,3 +479,4 @@ export type Claim = typeof claims.$inferSelect;
 export type Category = typeof expenseCategories.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type Department = typeof departments.$inferSelect;
+export type Feedback = typeof feedback.$inferSelect;

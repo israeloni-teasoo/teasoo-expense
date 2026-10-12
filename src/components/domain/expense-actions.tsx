@@ -1,22 +1,46 @@
 "use client";
 
 import { useState } from "react";
-import { Ban, Check, HelpCircle, Send, X } from "lucide-react";
+import { Ban, Check, FileWarning, HelpCircle, Send, StickyNote, X } from "lucide-react";
 import { ActionForm, FormField, SubmitButton } from "@/components/ui/action-form";
-import { Textarea } from "@/components/ui/form";
+import { Checkbox, Textarea } from "@/components/ui/form";
 import { ModalButton } from "@/components/ui/modal";
 import { cn } from "@/lib/cn";
-import { commentExpenseAction, reviewExpenseAction, submitDraftAction, voidExpenseAction } from "@/app/actions/expenses";
+import { commentExpenseAction, noteExpenseAction, reviewExpenseAction, submitDraftAction, voidExpenseAction } from "@/app/actions/expenses";
 
-export function ReviewPanel({ expenseId, status, next }: { expenseId: string; status: string; next?: string }) {
-  const [mode, setMode] = useState<"APPROVE" | "REJECT" | "CLARIFY">("APPROVE");
-  const options = [
-    { key: "APPROVE", label: "Approve", icon: Check, tone: "text-emerald-700 ring-emerald-300 bg-emerald-50" },
-    { key: "CLARIFY", label: "Ask a question", icon: HelpCircle, tone: "text-orange-700 ring-orange-300 bg-orange-50" },
-    { key: "REJECT", label: "Reject", icon: X, tone: "text-red-700 ring-red-300 bg-red-50" },
-  ] as const;
+type Mode = "APPROVE" | "EVIDENCE" | "CLARIFY" | "REJECT" | "NOTE";
+
+const MODES: { key: Mode; label: string; icon: typeof Check; tone: string }[] = [
+  { key: "APPROVE", label: "Approve", icon: Check, tone: "text-emerald-700 ring-emerald-300 bg-emerald-50" },
+  { key: "EVIDENCE", label: "Request evidence", icon: FileWarning, tone: "text-orange-700 ring-orange-300 bg-orange-50" },
+  { key: "CLARIFY", label: "Ask a question", icon: HelpCircle, tone: "text-orange-700 ring-orange-300 bg-orange-50" },
+  { key: "REJECT", label: "Reject", icon: X, tone: "text-red-700 ring-red-300 bg-red-50" },
+  { key: "NOTE", label: "Add note", icon: StickyNote, tone: "text-violet-700 ring-violet-300 bg-violet-50" },
+];
+
+export function ReviewPanel({ expenseId, status, next, hasEvidence }: { expenseId: string; status: string; next?: string; hasEvidence?: boolean }) {
+  const [mode, setMode] = useState<Mode>(hasEvidence === false ? "EVIDENCE" : "APPROVE");
+  const copy: Record<Mode, { label: string; hint?: string; placeholder?: string; required: boolean; button: string }> = {
+    APPROVE: { label: "Note (optional)", required: false, button: "Approve expense" },
+    EVIDENCE: {
+      label: "Message to the staff member",
+      hint: "The expense goes back to them. When they upload the receipt it returns to this queue automatically.",
+      placeholder: "Please upload the receipt or other evidence for this expense.",
+      required: false,
+      button: "Request evidence",
+    },
+    CLARIFY: { label: "Your question", placeholder: "e.g. Which client was this printing for?", required: true, button: "Send question" },
+    REJECT: { label: "Reason for rejection", hint: "The staff member will see this and can correct and resubmit.", required: true, button: "Reject expense" },
+    NOTE: { label: "Note", hint: "Doesn't change the status — use it for the reason behind a decision or a follow-up action.", required: true, button: "Add note" },
+  };
+  const c = copy[mode];
   return (
     <div className="space-y-4">
+      {hasEvidence === false && (
+        <p className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <FileWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" /> No receipt is attached to this expense.
+        </p>
+      )}
       {status === "SUBMITTED" && (
         <ActionForm action={reviewExpenseAction} className="space-y-0">
           <input type="hidden" name="expenseId" value={expenseId} />
@@ -26,8 +50,8 @@ export function ReviewPanel({ expenseId, status, next }: { expenseId: string; st
           </SubmitButton>
         </ActionForm>
       )}
-      <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Decision">
-        {options.map((o) => (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3" role="radiogroup" aria-label="Decision">
+        {MODES.map((o) => (
           <button
             key={o.key}
             type="button"
@@ -35,7 +59,7 @@ export function ReviewPanel({ expenseId, status, next }: { expenseId: string; st
             aria-checked={mode === o.key}
             onClick={() => setMode(o.key)}
             className={cn(
-              "flex flex-col items-center gap-1 rounded-lg px-2 py-2.5 text-xs font-medium ring-1 ring-inset transition",
+              "flex flex-col items-center gap-1 rounded-lg px-2 py-2.5 text-center text-xs font-medium ring-1 ring-inset transition",
               mode === o.key ? o.tone : "bg-white text-gray-600 ring-gray-200 hover:bg-gray-50",
             )}
           >
@@ -44,27 +68,37 @@ export function ReviewPanel({ expenseId, status, next }: { expenseId: string; st
           </button>
         ))}
       </div>
-      <ActionForm action={reviewExpenseAction} key={mode}>
+      <ActionForm action={mode === "NOTE" ? noteExpenseAction : reviewExpenseAction} key={mode} resetOnSuccess={mode === "NOTE"}>
         <input type="hidden" name="expenseId" value={expenseId} />
         <input type="hidden" name="decision" value={mode} />
-        {next && <input type="hidden" name="next" value={next} />}
-        <FormField
-          name="comment"
-          label={mode === "APPROVE" ? "Comment (optional)" : mode === "REJECT" ? "Reason for rejection" : "Your question"}
-          required={mode !== "APPROVE"}
-          hint={mode === "REJECT" ? "The staff member will see this and can correct and resubmit." : undefined}
-        >
-          <Textarea id="comment" name="comment" rows={3} placeholder={mode === "CLARIFY" ? "e.g. Which client was this printing for?" : undefined} />
+        {next && mode !== "NOTE" && <input type="hidden" name="next" value={next} />}
+        <FormField name="comment" label={c.label} required={c.required} hint={c.hint}>
+          <Textarea id="comment" name="comment" rows={3} placeholder={c.placeholder} />
         </FormField>
+        {mode === "NOTE" && <Checkbox name="internal" label="Internal — visible to finance only" description="Leave unticked to show the note to the staff member and notify them." />}
         <SubmitButton
           className="w-full"
           variant={mode === "APPROVE" ? "success" : mode === "REJECT" ? "danger" : "primary"}
           pendingText="Saving…"
         >
-          {mode === "APPROVE" ? "Approve expense" : mode === "REJECT" ? "Reject expense" : "Send question"}
+          {c.button}
         </SubmitButton>
       </ActionForm>
     </div>
+  );
+}
+
+/** Notes on expenses that are no longer awaiting review (approved, rejected, reconciled…). */
+export function NoteForm({ expenseId }: { expenseId: string }) {
+  return (
+    <ActionForm action={noteExpenseAction} resetOnSuccess>
+      <input type="hidden" name="expenseId" value={expenseId} />
+      <FormField name="comment" label="Note" required>
+        <Textarea id="comment" name="comment" rows={3} />
+      </FormField>
+      <Checkbox name="internal" label="Internal — visible to finance only" description="Leave unticked to show the note to the staff member and notify them." />
+      <SubmitButton pendingText="Saving…">Add note</SubmitButton>
+    </ActionForm>
   );
 }
 

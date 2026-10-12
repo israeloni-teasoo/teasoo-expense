@@ -8,6 +8,7 @@ import { can, ROLE_LABELS } from "@/lib/rbac";
 import { getOrg } from "@/lib/services/org";
 import { unreadCount } from "@/lib/services/notifications";
 import { runSweep } from "@/lib/services/sweep";
+import { openFeedbackCount } from "@/lib/services/feedback";
 import { logoutAction } from "@/app/actions/auth";
 import { keepPasswordAction } from "@/app/actions/account";
 import Link from "next/link";
@@ -19,7 +20,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
   await runSweep(user.organisationId).catch((e) => console.error("sweep failed", e));
 
-  const [org, unread, reviewCount, claimCount, attentionCount] = await Promise.all([
+  const [org, unread, reviewCount, claimCount, attentionCount, feedbackCount] = await Promise.all([
     getOrg(user.organisationId),
     unreadCount(user.id),
     can(user.role, "expenses.review")
@@ -48,6 +49,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       .from(expenses)
       .where(and(eq(expenses.staffId, user.id), inArray(expenses.status, ["REJECTED", "NEEDS_CLARIFICATION"])))
       .then((r) => Number(r[0].c)),
+    can(user.role, "feedback.manage") ? openFeedbackCount(user.organisationId) : 0,
   ]);
 
   const sections: NavSection[] = [];
@@ -62,6 +64,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         { href: "/expenses/new", label: "Add Expense", icon: "plus" },
         { href: "/claims", label: "Claims", icon: "claims" },
         { href: "/notifications", label: "Notifications", icon: "bell", badge: unread },
+        { href: "/feedback", label: "Feedback", icon: "feedback" },
         { href: "/profile", label: "Profile", icon: "user" },
       ],
     });
@@ -103,6 +106,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         admin.push({ href: "/admin/projects", label: "Projects", icon: "folder" });
         admin.push({ href: "/admin/settings", label: "Settings", icon: "settings" });
       }
+      if (can(user.role, "feedback.manage")) admin.push({ href: "/admin/feedback", label: "Feedback inbox", icon: "feedback", badge: feedbackCount });
       if (can(user.role, "audit.view")) admin.push({ href: "/admin/audit", label: "Audit log", icon: "audit" });
       sections.push({ title: "Administration", items: admin });
     }
@@ -110,6 +114,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       title: "Account",
       items: [
         { href: "/notifications", label: "Notifications", icon: "bell", badge: unread },
+        { href: "/feedback", label: "Feedback", icon: "feedback" },
         { href: "/profile", label: "Profile", icon: "user" },
       ],
     });

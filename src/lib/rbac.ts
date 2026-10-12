@@ -26,6 +26,7 @@ export const PERMISSIONS = {
   "admin.users": "Manage users and roles",
   "admin.config": "Configure categories, departments, projects and rules",
   "audit.view": "View audit logs",
+  "feedback.manage": "Read, answer and resolve feedback from all users",
 } as const;
 
 export type Permission = keyof typeof PERMISSIONS;

@@ -16,6 +16,7 @@ import {
   Home,
   LogOut,
   Menu,
+  MessageSquarePlus,
   Plus,
   Receipt,
   Scale,
@@ -31,6 +32,7 @@ import {
 import { cn } from "@/lib/cn";
 import { Logo } from "./logo";
 import { NavigationProgress } from "./navigation-progress";
+import { FeedbackButton } from "@/components/forms/feedback-forms";
 import { PendingButton } from "@/components/ui/pending-button";
 
 const ICONS = {
@@ -54,6 +56,7 @@ const ICONS = {
   shield: Shield,
   claims: HandCoins,
   book: BookOpen,
+  feedback: MessageSquarePlus,
 } as const;
 export type IconName = keyof typeof ICONS;
 
@@ -204,7 +207,8 @@ export function AppShell({
               <Logo />
             </Link>
             <p className="hidden truncate text-sm font-medium text-gray-500 lg:block">{orgName}</p>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-1 sm:gap-2">
+              <FeedbackButton />
               <Link href="/notifications" className="relative rounded-full p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700" aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}>
                 <Bell className="h-5 w-5" />
                 {unread > 0 && (

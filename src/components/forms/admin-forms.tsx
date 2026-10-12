@@ -231,7 +231,7 @@ export function CategoryForm({ c }: { c?: { id: string; name: string; descriptio
       <FormField name="keywords" label="Keywords" hint="Comma-separated. Used to suggest this category from an expense description.">
         <Textarea id="keywords" name="keywords" rows={2} defaultValue={c?.keywords ?? ""} />
       </FormField>
-      <Checkbox name="receiptRequired" defaultChecked={c?.receiptRequired ?? true} label="Receipt required" description="Expenses in this category can't be submitted without a receipt." />
+      <Checkbox name="receiptRequired" defaultChecked={c?.receiptRequired ?? true} label="Receipt required" description="Enforced when “Require receipts before funded expenses can be submitted” is on in Settings. Personal-spend claims always need a receipt." />
       {c && <Checkbox name="archived" defaultChecked={c.archived} label="Archived" description="Hidden from new expenses; existing records keep it." />}
       <div className="flex justify-end">
         <SubmitButton pendingText="Saving…">Save category</SubmitButton>
@@ -316,7 +316,12 @@ export function SettingsForm({ name, settings }: { name: string; settings: OrgSe
       </FormField>
       <fieldset className="space-y-4">
         <legend className="mb-2 text-sm font-semibold text-gray-900">Expense validation rules</legend>
-        <Checkbox name="requireReceipt" defaultChecked={settings.requireReceipt} label="Require a receipt for every expense" description="When off, only categories marked “receipt required” need one." />
+        <Checkbox
+          name="requireReceipt"
+          defaultChecked={settings.requireReceipt}
+          label="Require receipts before funded expenses can be submitted"
+          description="Applies to categories marked “receipt required”. When off, staff can submit now and add the receipt later. Personal-spend claims always need a receipt."
+        />
         <Checkbox name="blockFutureDates" defaultChecked={settings.blockFutureDates} label="Block future expense dates" description="“Expense date cannot be in the future.”" />
         <Checkbox name="duplicateDetection" defaultChecked={settings.duplicateDetection} label="Warn about possible duplicates" description="Same amount within 3 days with a similar description or vendor." />
         <Checkbox name="blockOverspend" defaultChecked={settings.blockOverspend} label="Block over-spending" description="When off, over-budget expenses are allowed but flagged, and the staff member logs a claim with evidence of approval." />

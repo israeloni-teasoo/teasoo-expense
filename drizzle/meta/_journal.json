@@ -15,6 +15,13 @@
       "when": 1791802348433,
       "tag": "0001_google_auth_and_email",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791816030639,
+      "tag": "0002_reviews_evidence_feedback",
+      "breakpoints": true
     }
   ]
 }

@@ -12,7 +12,7 @@ export const EXPENSE_STATUS: Record<ExpenseStatus, { label: string; tone: Tone; 
   DRAFT: { label: "Draft", tone: "gray" },
   SUBMITTED: { label: "Submitted", tone: "blue", staffLabel: "Pending" },
   UNDER_REVIEW: { label: "Under review", tone: "purple", staffLabel: "Being reviewed" },
-  NEEDS_CLARIFICATION: { label: "Needs clarification", tone: "orange", staffLabel: "Question for you" },
+  NEEDS_CLARIFICATION: { label: "Awaiting staff", tone: "orange", staffLabel: "Action needed" },
   APPROVED: { label: "Approved", tone: "green" },
   REJECTED: { label: "Rejected", tone: "red", staffLabel: "Needs correction" },
   RECONCILED: { label: "Reconciled", tone: "teal" },
@@ -49,6 +49,7 @@ export const DOCUMENT_KIND_LABELS = {
   TRANSFER_RECEIPT: "Transfer receipt",
   RETURN_EVIDENCE: "Return evidence",
   AUTHORIZATION: "Authorization evidence",
+  SCREENSHOT: "Screenshot",
 } as const;
 
 export function initials(first: string, last?: string) {
