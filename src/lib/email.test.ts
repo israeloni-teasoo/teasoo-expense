@@ -18,3 +18,26 @@ describe("sendEmail", () => {
     expect(r).toEqual({ ok: false, error: "Email provider error (403): The teasooconsulting.com domain is not verified." });
   });
 });
+
+describe("emailFromProblem", () => {
+  it("accepts plain and named addresses, rejects incomplete ones", async () => {
+    const { emailFromProblem } = await import("./config");
+    expect(emailFromProblem("Teasoo Expense <notifications@expense.teasooconsulting.com>")).toBeNull();
+    expect(emailFromProblem("notifications@expense.teasooconsulting.com")).toBeNull();
+    expect(emailFromProblem("@expense.teasooconsulting.com")).toMatch(/isn't a valid sender/);
+    expect(emailFromProblem("Teasoo <expense.teasooconsulting.com>")).toMatch(/isn't a valid sender/);
+  });
+});
+
+describe("sender fallback", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+  it("uses the verified default sender when EMAIL_FROM is invalid, and warns", async () => {
+    vi.stubEnv("EMAIL_FROM", "@expense.teasooconsulting.com");
+    const { config, emailFromWarning } = await import("./config");
+    expect(config.email.from).toBe("Teasoo Expense <notifications@expense.teasooconsulting.com>");
+    expect(emailFromWarning()).toMatch(/Using Teasoo Expense <notifications@expense.teasooconsulting.com> instead/);
+  });
+});

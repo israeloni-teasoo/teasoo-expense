@@ -1,5 +1,5 @@
 import "server-only";
-import { config, emailEnabled } from "./config";
+import { config, emailEnabled, emailFromProblem } from "./config";
 
 export type Email = { to: string; subject: string; html: string; text: string };
 
@@ -11,6 +11,11 @@ export async function sendEmail(msg: Email): Promise<{ ok: boolean; error?: stri
   if (!emailEnabled()) {
     console.info(`[email:not-sent] to=${msg.to} subject="${msg.subject}"\n${msg.text}`);
     return { ok: false, error: "Email is not configured (RESEND_API_KEY is missing)." };
+  }
+  const fromProblem = emailFromProblem(config.email.from);
+  if (fromProblem) {
+    console.error(`[email] ${fromProblem}`);
+    return { ok: false, error: fromProblem };
   }
   try {
     const res = await fetch("https://api.resend.com/emails", {
