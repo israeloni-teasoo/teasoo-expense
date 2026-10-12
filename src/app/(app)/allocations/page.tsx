@@ -31,7 +31,8 @@ export default async function AllocationsPage({ searchParams }: { searchParams: 
     }),
     getLookups(user.organisationId),
   ]);
-  const totals = rows.reduce(
+  // Personal spend is staff's own money, so it stays out of the allocated totals.
+  const totals = rows.filter((r) => r.kind !== "REIMBURSEMENT").reduce(
     (t, r) => ({ received: t.received + r.balance.totalFunded, spent: t.spent + r.balance.spent, remaining: t.remaining + r.balance.available }),
     { received: 0, spent: 0, remaining: 0 },
   );

@@ -20,7 +20,7 @@ import {
 } from "@/db/schema";
 import type { CurrentUser } from "@/lib/auth/current";
 import { audit, diff } from "@/lib/audit";
-import { UNRESOLVED_STATUSES, type BalanceSummary } from "@/lib/balance";
+import { UNRESOLVED_STATUSES, personalSpendOwed, type BalanceSummary } from "@/lib/balance";
 import { todayISO, isISODate } from "@/lib/dates";
 import { DomainError, forbidden, notFound } from "@/lib/errors";
 import { formatMoney } from "@/lib/money";
@@ -623,4 +623,109 @@ export async function maybeNotifyReadyToReconcile(tx: Executor, actor: CurrentUs
       dedupeKey: `ready:${allocationId}:${balance.approved}:${balance.returned}`,
     });
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Personal spend settlement                                           */
+/* ------------------------------------------------------------------ */
+
+export type SettlementInput = {
+  method: "REFUND" | "OFFSET";
+  amount: number;
+  /** OFFSET: the staff member's funded allocation whose unspent balance covers the personal spend. */
+  sourceAllocationId?: string | null;
+  reference?: string | null;
+  note?: string | null;
+};
+
+/**
+ * Personal spend is the staff member's own money and never reduces their allocated funds. Finance
+ * settles approved personal spend either by refunding it from company funds, or — when the staff
+ * member is holding unspent allocated money — by offsetting it against that allocation. An offset
+ * moves the amount out of the funded allocation (TRANSFER −x) and into the personal record
+ * (REIMBURSEMENT +x), so both records show where the money went.
+ */
+export async function settlePersonalSpend(actor: CurrentUser, personalId: string, input: SettlementInput) {
+  if (!can(actor.role, "allocations.reconcile")) throw forbidden();
+  if (!(input.amount > 0)) throw new DomainError("Enter the amount to settle.", "VALIDATION", { amount: "Required." });
+  if (input.method === "OFFSET" && !input.sourceAllocationId)
+    throw new DomainError("Choose the allocation to settle from.", "VALIDATION", { sourceAllocationId: "Required." });
+
+  return db.transaction(async (tx) => {
+    const personal = await lockAllocation(tx, personalId);
+    if (personal.organisationId !== actor.organisationId) throw notFound();
+    if (personal.kind !== "REIMBURSEMENT") throw new DomainError("Only personal-spend records are settled this way.");
+    if (personal.status !== "ACTIVE") throw new DomainError("This personal-spend record is already closed.");
+    if (personal.staffId === actor.id) throw forbidden("You can't settle your own personal spend.");
+    const owed = personalSpendOwed(await loadBalance(personalId, tx));
+    if (owed <= 0) throw new DomainError("Nothing is owed yet — expenses must be approved before they can be settled.");
+    if (input.amount > owed)
+      throw new DomainError(`Only ${formatMoney(owed)} of approved personal spend is unsettled.`, "VALIDATION", { amount: `Maximum ${formatMoney(owed)}` });
+
+    let source: Allocation | null = null;
+    if (input.method === "OFFSET") {
+      source = await lockAllocation(tx, input.sourceAllocationId!);
+      if (source.organisationId !== actor.organisationId || source.staffId !== personal.staffId || source.kind !== "ADVANCE")
+        throw new DomainError("Choose one of this staff member's allocated funds.", "VALIDATION", { sourceAllocationId: "Invalid allocation." });
+      if (source.status !== "ACTIVE") throw new DomainError("That allocation is closed.", "VALIDATION", { sourceAllocationId: "Closed." });
+      const available = (await loadBalance(source.id, tx)).available;
+      if (input.amount > available)
+        throw new DomainError(`${source.reference} only has ${formatMoney(Math.max(available, 0))} unspent.`, "VALIDATION", {
+          amount: `Maximum ${formatMoney(Math.max(available, 0))} from this allocation`,
+        });
+    }
+
+    const note = input.note?.trim() || null;
+    const ref = input.reference?.trim() || null;
+    const how = source ? `settled from ${source.reference} (${source.purpose})` : "refunded by the company";
+    await tx.insert(allocationAdjustments).values({
+      allocationId: personal.id,
+      type: "REIMBURSEMENT",
+      amount: input.amount,
+      reason: `Personal spend ${how}${note ? ` — ${note}` : ""}`,
+      reference: ref ?? source?.reference ?? null,
+      createdBy: actor.id,
+    });
+    if (source) {
+      await tx.insert(allocationAdjustments).values({
+        allocationId: source.id,
+        type: "TRANSFER",
+        amount: -input.amount,
+        reason: `Used to settle personal spend ${personal.reference} (${personal.purpose})${note ? ` — ${note}` : ""}`,
+        reference: personal.reference,
+        createdBy: actor.id,
+      });
+      await audit(tx, {
+        organisationId: actor.organisationId,
+        userId: actor.id,
+        entityType: "ALLOCATION",
+        entityId: source.id,
+        entityRef: source.reference,
+        allocationId: source.id,
+        action: "ADJUSTMENT_TRANSFER",
+        summary: `${actor.fullName} used ${formatMoney(input.amount)} of this allocation to settle personal spend ${personal.reference}`,
+        newValues: { amount: -input.amount, personalSpend: personal.reference },
+      });
+    }
+    await audit(tx, {
+      organisationId: actor.organisationId,
+      userId: actor.id,
+      entityType: "ALLOCATION",
+      entityId: personal.id,
+      entityRef: personal.reference,
+      allocationId: personal.id,
+      action: source ? "SETTLED_BY_OFFSET" : "SETTLED_BY_REFUND",
+      summary: `${actor.fullName} settled ${formatMoney(input.amount)} of personal spend — ${how}${ref ? ` (ref ${ref})` : ""}`,
+      newValues: { amount: input.amount, method: input.method, source: source?.reference ?? null, reference: ref },
+    });
+    await notifyUsers(tx, [personal.staffId], {
+      type: "PERSONAL_SPEND_SETTLED",
+      title: `${formatMoney(input.amount)} of your personal spend has been settled`,
+      body: source
+        ? `Settled from your unspent ${source.purpose} funds (${source.reference}) — keep that amount; it no longer needs to be returned.`
+        : `Refunded by the company${ref ? ` (ref ${ref})` : ""}.`,
+      link: `/allocations/${personal.id}`,
+    });
+    return { remaining: owed - input.amount };
+  });
 }

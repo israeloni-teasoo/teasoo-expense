@@ -114,6 +114,7 @@ export function ActionForm({
         }}
         noValidate
         method="post"
+        data-action-form=""
         {...rest}
       >
         {error && (

@@ -51,7 +51,8 @@ export function NavigationProgress() {
     // Capture phase: runs before next/form intercepts the submit for client-side navigation.
     const onSubmit = (e: SubmitEvent) => {
       const form = e.target as HTMLFormElement;
-      if (form.method?.toLowerCase() === "get") start();
+      // getAttribute, not form.method: a field named "method" would shadow the property.
+      if ((form.getAttribute("method") ?? "get").toLowerCase() === "get" && !form.hasAttribute("data-action-form")) start();
     };
     document.addEventListener("click", onClick, true);
     document.addEventListener("submit", onSubmit, true);

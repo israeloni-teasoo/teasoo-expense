@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql, type SQL } from
 import { db } from "@/db";
 import { allocationAdjustments, allocations, departments, documents, expenseCategories, expenses, fundReturns, projects, users } from "@/db/schema";
 import type { CurrentUser } from "@/lib/auth/current";
-import { APPROVED_STATUSES, PENDING_STATUSES, type BalanceSummary } from "@/lib/balance";
+import { APPROVED_STATUSES, PENDING_STATUSES, personalSpendOwed, type BalanceSummary } from "@/lib/balance";
 import { addDays, todayISO } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { can } from "@/lib/rbac";
@@ -21,9 +21,19 @@ function dateRange(col: typeof expenses.expenseDate | typeof allocations.dateRec
   return c;
 }
 
+/**
+ * Totals across allocations. Personal-spend records are the staff member's own money, so they are
+ * kept out of received / spent / remaining and reported separately as what is owed to staff.
+ */
 function totalsOf(list: AllocationListItem[]) {
-  const t = { received: 0, spent: 0, approved: 0, pending: 0, remaining: 0, returned: 0, outstanding: 0, overspend: 0 };
+  const t = { received: 0, spent: 0, approved: 0, pending: 0, remaining: 0, returned: 0, outstanding: 0, overspend: 0, personalOwed: 0, personalPending: 0, personalSpent: 0 };
   for (const a of list) {
+    if (a.kind === "REIMBURSEMENT") {
+      t.personalOwed += personalSpendOwed(a.balance);
+      t.personalPending += a.balance.pending;
+      t.personalSpent += a.balance.spent;
+      continue;
+    }
     t.received += a.balance.totalFunded;
     t.spent += a.balance.spent;
     t.approved += a.balance.approved;
@@ -156,7 +166,10 @@ export async function financeDashboard(actor: CurrentUser) {
   return {
     metrics: {
       disbursed: t.received,
-      expenses: t.spent,
+      // All spending, including staff's own money (personal spend) awaiting or after refund.
+      expenses: t.spent + t.personalSpent,
+      owedToStaff: activeTotals.personalOwed,
+      owedToStaffPending: activeTotals.personalPending,
       pendingReview: Number(pendingRow[0].total),
       pendingCount: Number(pendingRow[0].count),
       outstanding: activeTotals.outstanding,
@@ -453,8 +466,11 @@ export async function staffDirectory(actor: CurrentUser) {
     listAllocations(actor, { status: "all" }),
   ]);
   return people.map(({ user, departmentName }) => {
-    const mine = allocs.filter((a) => a.staffId === user.id && a.status !== "VOIDED");
+    const all = allocs.filter((a) => a.staffId === user.id && a.status !== "VOIDED");
+    // Allocated funds only; personal spend (the staff member's own money) is reported as owed.
+    const mine = all.filter((a) => a.kind !== "REIMBURSEMENT");
     const active = mine.filter((a) => a.status === "ACTIVE");
+    const personalActive = all.filter((a) => a.kind === "REIMBURSEMENT" && a.status === "ACTIVE");
     const sum = (f: (b: BalanceSummary) => number, list = mine) => list.reduce((s, a) => s + f(a.balance), 0);
     return {
       id: user.id,
@@ -473,7 +489,8 @@ export async function staffDirectory(actor: CurrentUser) {
       outstanding: sum((b) => Math.max(b.outstanding, 0), active),
       pending: sum((b) => b.pending, active),
       overdue: active.filter((a) => a.overdue).length,
-      lastActivity: mine.reduce<Date | null>((m, a) => (!m || a.lastActivity > m ? a.lastActivity : m), null),
+      owedToStaff: personalActive.reduce((s, a) => s + personalSpendOwed(a.balance), 0),
+      lastActivity: all.reduce<Date | null>((m, a) => (!m || a.lastActivity > m ? a.lastActivity : m), null),
     };
   });
 }

@@ -10,6 +10,7 @@ import { formatBytes, PAYMENT_METHODS } from "@/lib/format";
 import { formatMoney, koboToInput, parseMoney } from "@/lib/money";
 import { suggestCategory } from "@/lib/suggest";
 import { receiptRequired } from "@/lib/receipt-rules";
+import { DEFAULT_PERSONAL_SPEND_PURPOSE, PERSONAL_SPEND_CHOICE } from "@/lib/personal-spend";
 import { canScan, readReceipt } from "@/lib/ocr";
 import { parseReceiptText, type ReceiptFields } from "@/lib/receipt-parser";
 import { formatDate } from "@/lib/dates";
@@ -131,7 +132,16 @@ function Steps({
   const cameraInput = useRef<HTMLInputElement>(null);
   const supportingInput = useRef<HTMLInputElement>(null);
 
-  const fund = funds.find((f) => f.id === allocationId);
+  const fundedOptions = funds.filter((f) => f.kind !== "REIMBURSEMENT");
+  const personalOptions: FundOption[] = funds.filter((f) => f.kind === "REIMBURSEMENT");
+  if (!personalOptions.some((f) => f.purpose === DEFAULT_PERSONAL_SPEND_PURPOSE)) {
+    personalOptions.unshift({ id: PERSONAL_SPEND_CHOICE, reference: "Paid from my own pocket", purpose: "My own money (personal spend)", kind: "REIMBURSEMENT", available: 0, totalFunded: 0, projectId: null });
+  }
+  const fund = [...fundedOptions, ...personalOptions].find((f) => f.id === allocationId);
+  function selectFund(f: FundOption) {
+    setAllocationId(f.id);
+    if (!projectId && f.projectId) setProjectId(f.projectId);
+  }
   const amount = parseMoney(amountText);
   const category = categories.find((c) => c.id === categoryId);
   const suggested = useMemo(() => (description.length > 3 ? suggestCategory(description, categories) : null), [description, categories]);
@@ -262,57 +272,32 @@ function Steps({
 
       {/* Step 1: fund */}
       <section className={cn(step !== 0 && "hidden")}>
-        <h2 className="text-lg font-semibold text-gray-900">Which fund is this expense for?</h2>
-        <p className="mt-1 text-sm text-gray-500">Pick the money you were given for this purchase.</p>
-        <div className="mt-4 space-y-3">
-          {funds.length === 0 && (
-            <p className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
-              You have no active funds. Ask finance to assign funds, or open a personal-spend record from My Funds.
-            </p>
-          )}
-          {funds.map((f) => (
-            <label
-              key={f.id}
-              className={cn(
-                "flex cursor-pointer items-center gap-4 rounded-xl border bg-white p-4 shadow-sm transition",
-                allocationId === f.id ? "border-brand-600 ring-2 ring-brand-600/20" : "border-gray-200 hover:border-gray-300",
-              )}
-            >
-              <input
-                type="radio"
-                name="allocationId"
-                value={f.id}
-                checked={allocationId === f.id}
-                onChange={() => {
-                  setAllocationId(f.id);
-                  if (!projectId && f.projectId) setProjectId(f.projectId);
-                }}
-                className="h-4 w-4 border-gray-300 text-brand-700 focus:ring-brand-600"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium text-gray-900">{f.purpose}</span>
-                <span className="block text-xs text-gray-500">{f.reference}</span>
-              </span>
-              <span className="text-right">
-                {f.kind === "REIMBURSEMENT" ? (
-                  <span className="text-xs font-medium text-violet-700">Personal spend</span>
-                ) : (
-                  <>
-                    <span className={cn("block font-semibold tabular-nums", f.available < 0 ? "text-red-600" : "text-brand-700")}>{formatMoney(f.available)}</span>
-                    <span className="block text-xs text-gray-500">remaining</span>
-                  </>
-                )}
-              </span>
-            </label>
+        <h2 className="text-lg font-semibold text-gray-900">Which money did you use?</h2>
+        <p className="mt-1 text-sm text-gray-500">Pick the funds you were given for this purchase, or your own money if you paid yourself.</p>
+        {fundedOptions.length > 0 && <p className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">Allocated funds</p>}
+        <div className="space-y-3">
+          {fundedOptions.map((f) => (
+            <FundOptionCard key={f.id} f={f} selected={allocationId === f.id} onSelect={() => selectFund(f)} />
           ))}
         </div>
+        <p className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">My own money</p>
+        <div className="space-y-3">
+          {personalOptions.map((f) => (
+            <FundOptionCard key={f.id} f={f} selected={allocationId === f.id} onSelect={() => selectFund(f)} />
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-gray-500">Personal spend is kept separate — it never reduces your allocated funds. Finance refunds you or settles it from funds you hold.</p>
       </section>
 
       {/* Step 2: details */}
       <section className={cn("space-y-4", step !== 1 && "hidden")}>
         <div>
           <h2 className="text-lg font-semibold text-gray-900">What did you spend on?</h2>
-          {fund && <p className="mt-1 text-sm text-gray-500">From {fund.purpose} · {fund.kind === "REIMBURSEMENT" ? "personal spend" : `${formatMoney(availableBefore)} available`}</p>}
+          {fund && (
+            <p className="mt-1 text-sm text-gray-500">
+              {fund.kind === "REIMBURSEMENT" ? "Paid from your own money — refunded to you, not taken from your allocated funds" : `From ${fund.purpose} · ${formatMoney(availableBefore)} available`}
+            </p>
+          )}
         </div>
         <input ref={scanCameraInput} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1}
           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) scanReceipt(f); }} />
@@ -554,6 +539,34 @@ function Steps({
         </div>
       </div>
     </div>
+  );
+}
+
+function FundOptionCard({ f, selected, onSelect }: { f: FundOption; selected: boolean; onSelect: () => void }) {
+  const personal = f.kind === "REIMBURSEMENT";
+  return (
+    <label
+      className={cn(
+        "flex cursor-pointer items-center gap-4 rounded-xl border bg-white p-4 shadow-sm transition",
+        selected ? (personal ? "border-violet-500 ring-2 ring-violet-500/20" : "border-brand-600 ring-2 ring-brand-600/20") : "border-gray-200 hover:border-gray-300",
+      )}
+    >
+      <input type="radio" name="allocationId" value={f.id} checked={selected} onChange={onSelect} className="h-4 w-4 border-gray-300 text-brand-700 focus:ring-brand-600" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium text-gray-900">{f.purpose === DEFAULT_PERSONAL_SPEND_PURPOSE ? "My own money (personal spend)" : f.purpose}</span>
+        <span className="block text-xs text-gray-500">{f.reference}</span>
+      </span>
+      <span className="text-right">
+        {personal ? (
+          <span className="text-xs font-medium text-violet-700">Refunded to you</span>
+        ) : (
+          <>
+            <span className={cn("block font-semibold tabular-nums", f.available < 0 ? "text-red-600" : "text-brand-700")}>{formatMoney(f.available)}</span>
+            <span className="block text-xs text-gray-500">remaining</span>
+          </>
+        )}
+      </span>
+    </label>
   );
 }
 

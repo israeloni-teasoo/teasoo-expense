@@ -5,7 +5,7 @@ import { Archive, Ban, CheckCircle2, HandCoins, Pencil, PiggyBank, Plus, RotateC
 import { DocumentGrid } from "@/components/domain/documents";
 import { ExpenseTable } from "@/components/domain/expense-table";
 import { ExportMenu } from "@/components/domain/export-menu";
-import { AddFundingForm, AllocationStatusForm, ClaimForm, EditAllocationForm, RecordReturnForm, ReconcileForm } from "@/components/forms/allocation-forms";
+import { AddFundingForm, AllocationStatusForm, ClaimForm, EditAllocationForm, RecordReturnForm, ReconcileForm, SettlePersonalSpendForm } from "@/components/forms/allocation-forms";
 import { AllocationStatusBadge, Badge, ClaimStatusBadge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -18,7 +18,8 @@ import { DomainError } from "@/lib/errors";
 import { ADJUSTMENT_LABELS } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { can } from "@/lib/rbac";
-import { getAllocationDetail } from "@/lib/services/allocations";
+import { getAllocationDetail, listAllocations } from "@/lib/services/allocations";
+import { personalSpendOwed } from "@/lib/balance";
 import { getLookups } from "@/lib/services/org";
 
 export const metadata: Metadata = { title: "Allocation" };
@@ -46,12 +47,18 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
   const personal = a.kind === "REIMBURSEMENT";
   const finance = can(user.role, "allocations.viewAll");
   const lookups = can(user.role, "allocations.create") ? await getLookups(user.organisationId) : null;
+  const owed = personal ? personalSpendOwed(b) : 0;
+  // Funds the staff member holds that a personal-spend settlement can be offset against.
+  const settlementSources =
+    personal && can(user.role, "allocations.reconcile")
+      ? (await listAllocations(user, { staffId: a.staffId, status: "ACTIVE" })).filter((x) => x.kind === "ADVANCE" && x.balance.available > 0)
+      : [];
   const openClaim = d.claims.find((c) => c.status === "SUBMITTED" || c.status === "RECOMMENDED");
   const unresolved = b.counts.pending + b.counts.draft + b.counts.rejected;
 
   const steps = [
     { label: "Allocated", value: b.initial, show: true },
-    { label: personal ? "Reimbursed" : "Additional funding", value: b.adjustments, show: b.adjustments !== 0 },
+    { label: personal ? "Settled (refunded / offset)" : b.adjustments < 0 ? "Funding adjustments" : "Additional funding", value: b.adjustments, show: b.adjustments !== 0 },
     { label: "Approved expenses", value: -b.approved, show: true },
     { label: "Pending review", value: -b.pending, show: b.pending > 0 },
     { label: "Rejected (not counted)", value: b.rejected, show: b.rejected > 0, muted: true },
@@ -79,15 +86,30 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
                 <Plus className="h-4 w-4" /> Add expense
               </LinkButton>
             )}
-            {isOwner && active && !openClaim && (personal ? b.spent > b.adjustments : true) && (
+            {isOwner && active && !openClaim && !personal && (
               <ModalButton
-                label={personal ? "Claim reimbursement" : b.overBudget ? "Log over-spend claim" : "Request more funds"}
+                label={b.overBudget ? "Log over-spend claim" : "Request more funds"}
                 icon={<HandCoins className="h-4 w-4" />}
-                variant={b.overBudget || personal ? "primary" : "secondary"}
-                title={personal ? "Claim reimbursement" : "Log a claim"}
+                variant={b.overBudget ? "primary" : "secondary"}
+                title="Log a claim"
                 description="Claims are reviewed by finance and approved by an administrator."
               >
-                <ClaimForm allocationId={a.id} suggested={personal ? b.spent - b.adjustments : b.overspend} kind={a.kind} />
+                <ClaimForm allocationId={a.id} suggested={b.overspend} kind={a.kind} />
+              </ModalButton>
+            )}
+            {personal && active && owed > 0 && can(user.role, "allocations.reconcile") && !isOwner && (
+              <ModalButton
+                label="Settle personal spend"
+                icon={<HandCoins className="h-4 w-4" />}
+                variant="primary"
+                title="Settle personal spend"
+                description={`${formatMoney(owed)} of approved personal spend is owed to ${d.staff?.fullName}.`}
+              >
+                <SettlePersonalSpendForm
+                  allocationId={a.id}
+                  owed={owed}
+                  sources={settlementSources.map((s) => ({ id: s.id, label: `${s.reference} — ${s.purpose}`, available: s.balance.available }))}
+                />
               </ModalButton>
             )}
             {active && can(user.role, "allocations.create") && !personal && (
@@ -113,7 +135,7 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
                     ]}
                   />
                 ) : (
-                  <ReconcileChecklist unresolved={unresolved} outstanding={b.outstanding} openClaim={!!openClaim} hasExpenses={b.counts.total > 0} />
+                  <ReconcileChecklist unresolved={unresolved} outstanding={b.outstanding} openClaim={!!openClaim} hasExpenses={b.counts.total > 0} personal={personal} />
                 )}
               </ModalButton>
             )}
@@ -126,6 +148,16 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
 
       {/* Status banners */}
       <div className="space-y-3">
+        {personal && active && (owed > 0 || b.pending > 0) && (
+          <Alert tone="blue" title={isOwner ? `Owed to you: ${formatMoney(owed)}` : `${formatMoney(owed)} owed to ${d.staff?.fullName}`}>
+            {isOwner
+              ? "This is your own money, kept separate from your allocated funds. Once approved, finance refunds you or settles it from funds you're holding."
+              : settlementSources.length
+                ? `Settle it with a company refund, or from their unspent allocated funds (${settlementSources.map((s) => `${s.reference}: ${formatMoney(s.balance.available)}`).join(", ")}).`
+                : "Settle it with a company refund — they hold no unspent allocated funds to offset against."}
+            {b.pending > 0 ? ` ${formatMoney(b.pending)} is still awaiting review.` : ""}
+          </Alert>
+        )}
         {b.overBudget && !personal && active && (
           <Alert tone="red" title={`Over budget by ${formatMoney(b.overspend)}`}>
             {openClaim
@@ -153,12 +185,13 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
 
       {/* Headline numbers */}
       <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Figure label={personal ? "Reimbursed" : "Received"} value={formatMoney(personal ? b.adjustments : b.totalFunded)} />
+        <Figure label={personal ? "Settled" : "Received"} value={formatMoney(personal ? b.adjustments : b.totalFunded)} />
         <Figure label="Spent" value={formatMoney(b.spent)} sub={`${b.counts.total} expense${b.counts.total === 1 ? "" : "s"}`} />
         <Figure label="Pending review" value={formatMoney(b.pending)} sub={b.counts.pending ? `${b.counts.pending} waiting` : undefined} />
         <Figure
-          label={personal ? "Owed to staff" : b.available < 0 ? "Over budget" : "Remaining"}
-          value={formatMoney(Math.abs(b.available))}
+          label={personal ? (isOwner ? "Owed to you" : "Owed to staff") : b.available < 0 ? "Over budget" : "Remaining"}
+          value={formatMoney(personal ? owed : Math.abs(b.available))}
+          sub={personal && b.pending > 0 ? `+ ${formatMoney(b.pending)} once approved` : undefined}
           highlight={personal ? "purple" : b.available < 0 ? "red" : "brand"}
         />
       </section>
@@ -411,7 +444,19 @@ function Figure({ label, value, sub, highlight }: { label: string; value: string
   );
 }
 
-function ReconcileChecklist({ unresolved, outstanding, openClaim, hasExpenses }: { unresolved: number; outstanding: number; openClaim: boolean; hasExpenses: boolean }) {
+function ReconcileChecklist({
+  unresolved,
+  outstanding,
+  openClaim,
+  hasExpenses,
+  personal,
+}: {
+  unresolved: number;
+  outstanding: number;
+  openClaim: boolean;
+  hasExpenses: boolean;
+  personal?: boolean;
+}) {
   const items = [
     { ok: hasExpenses, text: "At least one expense has been logged" },
     { ok: unresolved === 0, text: unresolved ? `${unresolved} expense(s) still draft, pending, rejected or queried` : "All expenses are approved or voided" },
@@ -422,7 +467,9 @@ function ReconcileChecklist({ unresolved, outstanding, openClaim, hasExpenses }:
         outstanding > 0
           ? `${formatMoney(outstanding)} unspent — record the return first`
           : outstanding < 0
-            ? `${formatMoney(-outstanding)} over budget — approve a reimbursement claim first`
+            ? personal
+              ? `${formatMoney(-outstanding)} still owed to the staff member — settle it first`
+              : `${formatMoney(-outstanding)} over budget — approve a reimbursement claim first`
             : "Every naira is accounted for",
     },
   ];

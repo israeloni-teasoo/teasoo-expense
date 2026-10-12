@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowRight, CalendarClock } from "lucide-react";
 import { AllocationStatusBadge, Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/misc";
-import type { BalanceSummary } from "@/lib/balance";
+import { personalSpendOwed, type BalanceSummary } from "@/lib/balance";
 import { formatDate, relativeTime } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import type { AllocationStatus } from "@/db/schema";
@@ -46,7 +46,15 @@ export function AllocationCard({
         <div className="mt-4">
           <p className="text-xs text-gray-500">Spent from personal funds</p>
           <p className="text-2xl font-semibold tabular-nums text-gray-900">{formatMoney(b.spent)}</p>
-          <p className="mt-1 text-xs text-gray-500">{b.adjustments > 0 ? `${formatMoney(b.adjustments)} reimbursed` : "Awaiting reimbursement claim"}</p>
+          <p className="mt-1 text-xs text-gray-500">
+            {personalSpendOwed(b) > 0
+              ? `${formatMoney(personalSpendOwed(b))} owed to you${b.adjustments > 0 ? ` · ${formatMoney(b.adjustments)} settled` : ""}`
+              : b.pending > 0
+                ? `${formatMoney(b.pending)} awaiting review`
+                : b.adjustments > 0
+                  ? `${formatMoney(b.adjustments)} settled`
+                  : "Not part of your allocated funds"}
+          </p>
         </div>
       ) : (
         <>

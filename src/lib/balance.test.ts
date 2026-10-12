@@ -86,3 +86,20 @@ describe("computeBalance", () => {
     expect(topped.overBudget).toBe(false);
   });
 });
+
+describe("personalSpendOwed", () => {
+  it("is the approved personal spend not yet refunded or offset", async () => {
+    const { personalSpendOwed } = await import("./balance");
+    const b = computeBalance({
+      initialAmount: 0,
+      adjustments: [{ amount: N(10_000) }],
+      returns: [],
+      expenses: [
+        { amount: N(25_000), status: "APPROVED" },
+        { amount: N(5_000), status: "SUBMITTED" },
+      ],
+    });
+    expect(personalSpendOwed(b)).toBe(N(15_000)); // pending isn't owed until approved
+    expect(personalSpendOwed(computeBalance({ initialAmount: 0, adjustments: [], returns: [], expenses: [] }))).toBe(0);
+  });
+});
