@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { SettingsForm } from "@/components/forms/admin-forms";
+import { DiagnosticsButtons } from "@/components/forms/diagnostics";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/misc";
@@ -46,6 +47,7 @@ export default async function SettingsPage() {
               </li>
             ))}
           </ul>
+          <DiagnosticsButtons />
           <div className="rounded-lg bg-gray-50 p-3 text-sm">
             <p className="font-medium text-gray-900">Google OAuth redirect URI for this domain</p>
             <p className="mt-1 text-xs text-gray-500">

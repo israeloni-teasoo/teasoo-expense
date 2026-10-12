@@ -9,7 +9,7 @@ export function Input({ className, invalid, ...props }: ComponentProps<"input"> 
 }
 
 export function Textarea({ className, invalid, ...props }: ComponentProps<"textarea"> & { invalid?: boolean }) {
-  return <textarea className={cn(control, invalid && "ring-red-400", className)} aria-invalid={invalid || undefined} rows={3} {...props} />;
+  return <textarea className={cn(control, invalid && "ring-red-400", className)} aria-invalid={invalid || undefined} rows={3} autoComplete="off" {...props} />;
 }
 
 export function Select({ className, invalid, ...props }: ComponentProps<"select"> & { invalid?: boolean }) {

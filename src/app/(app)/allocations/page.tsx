@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Form from "next/form";
 import Link from "next/link";
 import { Plus, Search } from "lucide-react";
 import { AllocationStatusBadge } from "@/components/ui/badge";
@@ -54,7 +55,7 @@ export default async function AllocationsPage({ searchParams }: { searchParams: 
         }
       />
 
-      <form method="get" className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto]">
+      <Form action="/allocations" className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <Input name="q" defaultValue={sp.q} placeholder="Search purpose, reference or staff…" className="pl-9" aria-label="Search allocations" />
@@ -83,7 +84,7 @@ export default async function AllocationsPage({ searchParams }: { searchParams: 
           {sp.overdue && <input type="hidden" name="overdue" value="1" />}
           <Button type="submit" variant="secondary" className="flex-1">Filter</Button>
         </div>
-      </form>
+      </Form>
       {sp.overdue === "1" && (
         <p className="mb-3 text-sm text-red-700">
           Showing overdue allocations only. <Link href="/allocations" className="font-medium underline">Clear</Link>

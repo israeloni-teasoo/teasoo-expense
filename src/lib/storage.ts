@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DomainError } from "./errors";
 
@@ -19,6 +19,7 @@ export interface StorageDriver {
   exists(key: string): Promise<boolean>;
   /** A short-lived URL the browser can fetch directly, or null to stream through the app. */
   signedUrl?(key: string, opts: { expiresIn: number; downloadName?: string }): Promise<string | null>;
+  remove?(key: string): Promise<void>;
 }
 
 class LocalDriver implements StorageDriver {
@@ -36,6 +37,9 @@ class LocalDriver implements StorageDriver {
   async get(key: string) {
     return readFile(this.resolve(key));
   }
+  async remove(key: string) {
+    await unlink(this.resolve(key)).catch(() => {});
+  }
   async exists(key: string) {
     try {
       await stat(this.resolve(key));
@@ -44,6 +48,15 @@ class LocalDriver implements StorageDriver {
       return false;
     }
   }
+}
+
+/**
+ * Supabase accepts two kinds of server key: the classic `service_role` JWT ("eyJ…"), which goes
+ * in both headers, and the newer `sb_secret_…` keys, which are not JWTs and must only be sent as
+ * `apikey` (Supabase's gateway rejects them as a Bearer token).
+ */
+export function supabaseAuthHeaders(key: string): Record<string, string> {
+  return key.startsWith("eyJ") ? { apikey: key, Authorization: `Bearer ${key}` } : { apikey: key };
 }
 
 /**
@@ -57,18 +70,48 @@ class SupabaseDriver implements StorageDriver {
     private bucket: string,
   ) {}
   private headers(extra: Record<string, string> = {}) {
-    return { Authorization: `Bearer ${this.key}`, apikey: this.key, ...extra };
+    return { ...supabaseAuthHeaders(this.key), ...extra };
+  }
+  /** Creates the private bucket if it doesn't exist yet (first upload on a new project). */
+  private async ensureBucket() {
+    const res = await fetch(`${this.url}/storage/v1/bucket`, {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ id: this.bucket, name: this.bucket, public: false }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      if (!/already exists|duplicate/i.test(body)) throw new Error(`Supabase could not create bucket "${this.bucket}" (${res.status}): ${body}`);
+    }
   }
   private objectPath(key: string) {
     return `${this.url}/storage/v1/object/${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`;
   }
   async put(key: string, data: Buffer, contentType: string) {
-    const res = await fetch(this.objectPath(key), {
-      method: "POST",
-      headers: this.headers({ "Content-Type": contentType, "x-upsert": "false", "cache-control": "max-age=3600" }),
-      body: new Uint8Array(data),
+    const upload = () =>
+      fetch(this.objectPath(key), {
+        method: "POST",
+        headers: this.headers({ "Content-Type": contentType, "x-upsert": "false", "cache-control": "max-age=3600" }),
+        body: new Uint8Array(data),
+      });
+    let res = await upload();
+    if (!res.ok) {
+      const body = await res.text();
+      if (/bucket not found/i.test(body)) {
+        await this.ensureBucket();
+        res = await upload();
+        if (res.ok) return;
+        throw new Error(`Supabase upload failed after creating the bucket (${res.status}): ${await res.text()}`);
+      }
+      throw new Error(`Supabase upload failed (${res.status}): ${body}`);
+    }
+  }
+  async remove(key: string) {
+    await fetch(`${this.url}/storage/v1/object/${this.bucket}`, {
+      method: "DELETE",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ prefixes: [key] }),
     });
-    if (!res.ok) throw new Error(`Supabase upload failed (${res.status}): ${await res.text()}`);
   }
   async get(key: string) {
     const res = await fetch(this.objectPath(key).replace("/object/", "/object/authenticated/"), { headers: this.headers() });
@@ -151,7 +194,14 @@ export async function storeUpload(file: File, maxMb: number): Promise<StoredFile
   const ext = ALLOWED_TYPES[type].ext[0];
   const now = new Date();
   const key = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${randomUUID()}.${ext}`;
-  await storage().put(key, buf, type);
+  try {
+    await storage().put(key, buf, type);
+  } catch (e) {
+    console.error(`[storage] upload of "${file.name}" failed`, e);
+    throw new DomainError(
+      "Your receipt couldn't be saved because file storage isn't working right now. Try again, or save without the file and add it later. (Administrators: Settings → Integrations → Test storage.)",
+    );
+  }
   return { fileName: cleanFileName(file.name), fileType: type, fileSize: buf.length, storageKey: key };
 }
 
@@ -161,3 +211,21 @@ export function filesFrom(formData: FormData, field: string): File[] {
     .filter((v): v is File => typeof v === "object" && v !== null && "arrayBuffer" in v && (v as File).size > 0);
 }
 
+
+/** Round-trip a tiny file through storage and report exactly what fails (admin diagnostics). */
+export async function testStorage(): Promise<{ ok: boolean; message: string }> {
+  const driver = storageDriverName();
+  const key = `diagnostics/${randomUUID()}.txt`;
+  const data = Buffer.from(`storage test ${new Date().toISOString()}`);
+  try {
+    const s = storage();
+    await s.put(key, data, "text/plain");
+    const back = await s.get(key);
+    if (!back.equals(data)) throw new Error("The file read back didn't match what was written.");
+    if (s.signedUrl) await s.signedUrl(key, { expiresIn: 60 });
+    await s.remove?.(key);
+    return { ok: true, message: `Storage is working (${driver}).` };
+  } catch (e) {
+    return { ok: false, message: `Storage test failed (${driver}): ${e instanceof Error ? e.message : String(e)}` };
+  }
+}

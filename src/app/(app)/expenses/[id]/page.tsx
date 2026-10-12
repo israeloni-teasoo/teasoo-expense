@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle, CheckCircle2, CircleDot, HelpCircle, MessageSquare, Pencil, Send, XCircle, Ban, Eye } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDot, FileWarning, HelpCircle, MessageSquare, Paperclip, Pencil, Send, XCircle, Ban, Eye } from "lucide-react";
 import { DocumentGrid } from "@/components/domain/documents";
 import { UploadDocumentsButton } from "@/components/domain/document-actions";
-import { CommentForm, ReviewPanel, SubmitDraftButton, VoidExpenseButton } from "@/components/domain/expense-actions";
+import { CommentForm, NoteForm, ReviewPanel, SubmitDraftButton, VoidExpenseButton } from "@/components/domain/expense-actions";
 import { Badge, ExpenseStatusBadge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -29,7 +29,9 @@ const REVIEW_META: Record<ReviewAction, { label: string; icon: typeof CircleDot;
   APPROVED: { label: "approved the expense", icon: CheckCircle2, color: "text-emerald-600 bg-emerald-50" },
   REJECTED: { label: "rejected the expense", icon: XCircle, color: "text-red-600 bg-red-50" },
   REQUEST_CLARIFICATION: { label: "asked a question", icon: HelpCircle, color: "text-orange-600 bg-orange-50" },
-  COMMENT: { label: "commented", icon: MessageSquare, color: "text-gray-600 bg-gray-100" },
+  REQUEST_EVIDENCE: { label: "requested evidence", icon: FileWarning, color: "text-orange-600 bg-orange-50" },
+  EVIDENCE_ADDED: { label: "added evidence", icon: Paperclip, color: "text-blue-600 bg-blue-50" },
+  COMMENT: { label: "added a note", icon: MessageSquare, color: "text-gray-600 bg-gray-100" },
   VOIDED: { label: "voided the expense", icon: Ban, color: "text-gray-600 bg-gray-100" },
 };
 
@@ -43,7 +45,8 @@ export default async function ExpenseDetailPage({ params }: { params: Promise<{ 
   const settings = await getSettings(user.organisationId);
   const e = d.expense;
   const staffView = d.isOwner && !can(user.role, "expenses.review");
-  const lastQuery = [...d.reviews].reverse().find((r) => r.action === "REJECTED" || r.action === "REQUEST_CLARIFICATION");
+  const lastQuery = [...d.reviews].reverse().find((r) => r.action === "REJECTED" || r.action === "REQUEST_CLARIFICATION" || r.action === "REQUEST_EVIDENCE");
+  const evidenceRequested = e.status === "NEEDS_CLARIFICATION" && lastQuery?.action === "REQUEST_EVIDENCE";
   const returned = e.status === "REJECTED" || e.status === "NEEDS_CLARIFICATION";
   const b = d.balance;
   const canUpload =
@@ -82,9 +85,17 @@ export default async function ExpenseDetailPage({ params }: { params: Promise<{ 
         {returned && lastQuery && (
           <Alert
             tone={e.status === "REJECTED" ? "red" : "amber"}
-            title={e.status === "REJECTED" ? `Rejected by ${lastQuery.reviewerName}` : `${lastQuery.reviewerName} asked a question`}
+            title={
+              e.status === "REJECTED"
+                ? `Rejected by ${lastQuery.reviewerName}`
+                : evidenceRequested
+                  ? `${lastQuery.reviewerName} requested evidence`
+                  : `${lastQuery.reviewerName} asked a question`
+            }
             action={
-              d.canEdit ? (
+              evidenceRequested && d.isOwner ? (
+                <UploadDocumentsButton expenseId={e.id} maxUploadMb={settings.maxUploadMb} label="Upload receipt" />
+              ) : d.canEdit ? (
                 <LinkButton href={`/expenses/${e.id}/edit`} size="sm" variant="secondary">
                   {e.status === "REJECTED" ? "Correct it" : "Respond"}
                 </LinkButton>
@@ -157,7 +168,12 @@ export default async function ExpenseDetailPage({ params }: { params: Promise<{ 
                   }
                 />
               ) : (
-                <EmptyState icon={<AlertTriangle className="h-6 w-6 text-amber-500" />} title="No receipt attached" description={d.isOwner ? "Upload a receipt so finance can verify this expense." : "Ask the staff member to attach a receipt."} />
+                <EmptyState
+                  icon={<AlertTriangle className="h-6 w-6 text-amber-500" />}
+                  title="No receipt attached"
+                  description={d.isOwner ? "Add the receipt whenever you have it so finance can verify this expense." : "Use “Request evidence” in the review panel to ask the staff member for it."}
+                  action={d.isOwner && canUpload ? <UploadDocumentsButton expenseId={e.id} maxUploadMb={settings.maxUploadMb} label="Add receipt" /> : undefined}
+                />
               )}
             </CardBody>
           </Card>
@@ -176,6 +192,7 @@ export default async function ExpenseDetailPage({ params }: { params: Promise<{ 
                         </span>
                         <p className="text-sm text-gray-900">
                           <span className="font-medium">{r.reviewerName}</span> {meta.label}
+                          {r.internal && <Badge tone="purple" className="ml-2">Internal · finance only</Badge>}
                         </p>
                         <p className="text-xs text-gray-500">{formatDateTime(r.createdAt)}</p>
                         {r.comment && <p className="mt-1.5 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">{r.comment}</p>}
@@ -195,12 +212,21 @@ export default async function ExpenseDetailPage({ params }: { params: Promise<{ 
           </Card>
         </div>
 
-        <div className="space-y-6">
+        {/* On phones the review panel comes first when there's a decision to make. */}
+        <div className={cn("space-y-6", d.canReview && "order-first lg:order-none")}>
           {d.canReview && (
             <Card className="border-brand-200 lg:sticky lg:top-24">
               <CardHeader title="Review" description={`Submitted by ${d.staff?.fullName}`} />
               <CardBody>
-                <ReviewPanel expenseId={e.id} status={e.status} next="/review" />
+                <ReviewPanel expenseId={e.id} status={e.status} next="/review" hasEvidence={d.documents.length > 0} />
+              </CardBody>
+            </Card>
+          )}
+          {!d.canReview && can(user.role, "expenses.review") && !d.isOwner && e.status !== "VOIDED" && (
+            <Card>
+              <CardHeader title="Add a note" description="Record the reason for a decision or a follow-up action." />
+              <CardBody>
+                <NoteForm expenseId={e.id} />
               </CardBody>
             </Card>
           )}

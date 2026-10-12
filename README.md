@@ -17,6 +17,9 @@ Responsive throughout: a sidebar layout on desktop, and on phones a bottom tab b
 | **Admin** | Everything above plus users & roles, categories (with receipt rules and suggestion keywords), departments, projects with budgets, validation rules, final claim approval, corrections, audit log |
 | **Management** | Read-only dashboard, allocations, expenses, staff, documents, reports and exports |
 | **Receipt scanning** | Snap or pick a receipt photo on the Add Expense details step: Tesseract.js reads it **in the browser** (free, no API key, the photo isn't sent anywhere for scanning) and fills in vendor, date, total and receipt number for the staff member to check. Undo restores what was there. PDFs can still be attached but aren't scanned |
+| **Evidence** | Receipts are optional when submitting a funded expense — staff can add them later from the expense page, and reviewers can **request evidence** (the expense returns to the review queue automatically once the receipt is uploaded). Personal-spend claims always require a receipt. Admins can make receipts compulsory per category in Settings |
+| **Review notes** | Reviewers approve, request evidence, ask a question, reject (reason required) or add a **note** — visible to the staff member or internal to finance only |
+| **Feedback** | A feedback button on every page (with optional screenshot and the page it was sent from); administrators answer and resolve items in **Admin → Feedback inbox**, and the sender is notified |
 | **Smart validation** | Insufficient balance (flag or block, configurable), possible duplicates (confirm to continue), future dates, required receipts, file type sniffing and size limits; category suggestions from the description; unusual-expense detection |
 | **Reconciliation** | Unspent money is never assumed returned: returns are recorded with method, reference and evidence. Allocations can only be reconciled once every expense is resolved, claims are decided and the final balance is ₦0 |
 | **Over-spending** | Over-budget expenses are flagged; staff log a claim with evidence of approval → accountant recommends → admin approves → the funds are added to the allocation as an adjustment |
@@ -90,6 +93,8 @@ Demo accounts (password `Password123`):
 Session cookies are `Secure` in production, so serve over HTTPS (Vercel does). The demo-account hint on the login page is hidden in production unless `SHOW_DEMO_ACCOUNTS=1`.
 
 Without `RESEND_API_KEY`, emails are written to the server log instead of being sent, and new ad-hoc staff passwords are shown on screen to share.
+
+**Troubleshooting:** **Admin → Settings → Integrations** shows which services are switched on, the Google redirect URI for the current domain, and has **Test storage** / **Send test email** buttons that report the exact error from Supabase or Resend. Unexpected errors show a short reference (e.g. `ref K3F9QZ`); search the Vercel function logs for `ref=K3F9QZ` to find the details. Supabase's newer `sb_secret_…` keys and the classic `service_role` JWT both work; the receipts bucket is created automatically on the first upload if it doesn't exist.
 
 ## Testing
 

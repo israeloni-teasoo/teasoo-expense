@@ -42,3 +42,12 @@ dialog::backdrop {
     background: white;
   }
 }
+
+@keyframes tx-progress {
+  from {
+    transform: scaleX(0.05);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}

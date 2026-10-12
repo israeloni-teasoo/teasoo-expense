@@ -7,6 +7,7 @@ import {
   departments,
   documents,
   expenseCategories,
+  feedback,
   expenseReviews,
   expenses,
   projects,
@@ -18,6 +19,7 @@ import {
 import type { CurrentUser } from "@/lib/auth/current";
 import { audit, diff } from "@/lib/audit";
 import { EDITABLE_STATUSES, PENDING_STATUSES } from "@/lib/balance";
+import { receiptRequired } from "@/lib/receipt-rules";
 import { addDays, isISODate, todayISO } from "@/lib/dates";
 import { ConfirmationRequired, DomainError, forbidden, notFound } from "@/lib/errors";
 import { formatMoney } from "@/lib/money";
@@ -244,7 +246,9 @@ export async function getExpenseDetail(actor: CurrentUser, id: string) {
     project,
     department,
     documents: docs.map((d) => ({ ...d.doc, uploaderName: `${d.first} ${d.last}` })),
-    reviews: reviews.map((r) => ({ ...r.review, reviewerName: `${r.first} ${r.last}`, reviewerRole: r.role })),
+    reviews: reviews
+      .filter((r) => !r.review.internal || can(actor.role, "expenses.review"))
+      .map((r) => ({ ...r.review, reviewerName: `${r.first} ${r.last}`, reviewerRole: r.role })),
     balance,
     similar,
     unusual,
@@ -459,7 +463,7 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
       }
     }
 
-    if (opts.submit && (settings.requireReceipt || category.receiptRequired)) {
+    if (opts.submit && receiptRequired({ allocationKind: allocation.kind, orgRequiresReceipts: settings.requireReceipt, categoryRequiresReceipt: category.receiptRequired })) {
       // Rule 6: a required receipt must exist before submission.
       let existingDocs = 0;
       if (expenseId) {
@@ -470,13 +474,17 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
         existingDocs = Number(r[0].count);
       }
       if (existingDocs + stored.length === 0) {
-        throw new DomainError(`A receipt is required for ${category.name} expenses. Upload a receipt or save as a draft.`, "VALIDATION", {
-          receipts: "Upload at least one receipt (JPG, PNG, WebP or PDF).",
-        });
+        throw new DomainError(
+          allocation.kind === "REIMBURSEMENT"
+            ? "Personal-spend claims need a receipt. Upload a receipt or save as a draft."
+            : `A receipt is required for ${category.name} expenses. Upload a receipt or save as a draft.`,
+          "VALIDATION",
+          { receipts: "Upload at least one receipt (JPG, PNG, WebP or PDF)." },
+        );
       }
     }
 
-    const nextStatus: ExpenseStatus = opts.submit ? "SUBMITTED" : existing?.status === "DRAFT" || !existing ? "DRAFT" : existing.status;
+    const nextStatus: ExpenseStatus = opts.submit || existing?.status === "SUBMITTED" ? "SUBMITTED" : existing?.status === "DRAFT" || !existing ? "DRAFT" : existing.status;
     const values = {
       allocationId: allocation.id,
       categoryId: category.id,
@@ -491,14 +499,19 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
       notes: input.notes?.trim() || null,
       status: nextStatus,
       overBudget: opts.submit ? overBudget && allocation.kind === "ADVANCE" : (existing?.overBudget ?? false),
-      submittedAt: opts.submit ? new Date() : (existing?.submittedAt ?? null),
+      // Keep a submitted expense's place in the review queue when it is edited.
+      submittedAt: existing?.status === "SUBMITTED" ? existing.submittedAt : opts.submit ? new Date() : (existing?.submittedAt ?? null),
     };
 
     let saved: Expense;
+    let editedWhileSubmitted = false;
     if (existing) {
       [saved] = await tx.update(expenses).set(values).where(eq(expenses.id, existing.id)).returning();
       const d = diff(existing as unknown as Record<string, unknown>, values);
       const wasReturned = existing.status === "REJECTED" || existing.status === "NEEDS_CLARIFICATION";
+      // Editing an expense that is already submitted (but not yet picked up for review) keeps it in the queue.
+      const wasSubmitted = existing.status === "SUBMITTED";
+      editedWhileSubmitted = wasSubmitted;
       await audit(tx, {
         organisationId: actor.organisationId,
         userId: actor.id,
@@ -506,14 +519,16 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
         entityId: saved.id,
         entityRef: saved.reference,
         allocationId: allocation.id,
-        action: opts.submit ? (wasReturned ? "RESUBMITTED" : "SUBMITTED") : "UPDATED",
-        summary: opts.submit
-          ? `${actor.fullName} ${wasReturned ? "corrected and resubmitted" : "submitted"} ${formatMoney(amount)} expense — ${values.description}`
-          : `${actor.fullName} updated draft expense — ${values.description}`,
+        action: wasSubmitted ? "UPDATED" : opts.submit ? (wasReturned ? "RESUBMITTED" : "SUBMITTED") : "UPDATED",
+        summary: wasSubmitted
+          ? `${actor.fullName} edited submitted ${formatMoney(amount)} expense — ${values.description}`
+          : opts.submit
+            ? `${actor.fullName} ${wasReturned ? "corrected and resubmitted" : "submitted"} ${formatMoney(amount)} expense — ${values.description}`
+            : `${actor.fullName} updated draft expense — ${values.description}`,
         oldValues: d.oldValues,
         newValues: d.newValues,
       });
-      if (opts.submit) {
+      if (opts.submit && !wasSubmitted) {
         await tx.insert(expenseReviews).values({
           expenseId: saved.id,
           reviewerId: actor.id,
@@ -560,7 +575,7 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
       });
     }
 
-    if (opts.submit) await afterSubmit(tx, actor, allocation, saved, stored.length > 0 || !!expenseId);
+    if (opts.submit && !editedWhileSubmitted) await afterSubmit(tx, actor, allocation, saved, stored.length > 0 || !!expenseId);
 
     const after = await loadBalance(allocation.id, tx);
     return { expense: saved, balance: after };
@@ -686,7 +701,9 @@ export async function voidExpense(actor: CurrentUser, id: string, reason: string
 /* Review workflow                                                     */
 /* ------------------------------------------------------------------ */
 
-type ReviewDecision = "START" | "APPROVE" | "REJECT" | "CLARIFY";
+type ReviewDecision = "START" | "APPROVE" | "REJECT" | "CLARIFY" | "EVIDENCE";
+
+const DEFAULT_EVIDENCE_REQUEST = "Please upload the receipt or other evidence for this expense.";
 
 export async function reviewExpense(actor: CurrentUser, id: string, decision: ReviewDecision, comment?: string | null) {
   if (!can(actor.role, "expenses.review")) throw forbidden();
@@ -697,6 +714,7 @@ export async function reviewExpense(actor: CurrentUser, id: string, decision: Re
       { comment: "Required." },
     );
   }
+  const note = decision === "EVIDENCE" ? comment?.trim() || DEFAULT_EVIDENCE_REQUEST : comment?.trim() || null;
   return db.transaction(async (tx) => {
     const rows = await tx.select().from(expenses).where(eq(expenses.id, id)).for("update");
     const expense = rows[0];
@@ -712,6 +730,7 @@ export async function reviewExpense(actor: CurrentUser, id: string, decision: Re
       APPROVE: { status: "APPROVED", action: "APPROVED", verb: "approved" },
       REJECT: { status: "REJECTED", action: "REJECTED", verb: "rejected" },
       CLARIFY: { status: "NEEDS_CLARIFICATION", action: "REQUEST_CLARIFICATION", verb: "requested clarification on" },
+      EVIDENCE: { status: "NEEDS_CLARIFICATION", action: "REQUEST_EVIDENCE", verb: "requested evidence for" },
     } as const;
     const m = map[decision];
     if (decision === "START" && expense.status === "UNDER_REVIEW") return;
@@ -724,7 +743,7 @@ export async function reviewExpense(actor: CurrentUser, id: string, decision: Re
         reviewedBy: actor.id,
       })
       .where(eq(expenses.id, id));
-    await tx.insert(expenseReviews).values({ expenseId: id, reviewerId: actor.id, action: m.action, comment: comment?.trim() || null });
+    await tx.insert(expenseReviews).values({ expenseId: id, reviewerId: actor.id, action: m.action, comment: note });
     // Rule 7: every approval / rejection has an audit record.
     await audit(tx, {
       organisationId: actor.organisationId,
@@ -734,9 +753,9 @@ export async function reviewExpense(actor: CurrentUser, id: string, decision: Re
       entityRef: expense.reference,
       allocationId: expense.allocationId,
       action: m.action,
-      summary: `${actor.fullName} ${m.verb} ${formatMoney(expense.amount)} expense — ${expense.description}${comment?.trim() ? ` ("${comment.trim()}")` : ""}`,
+      summary: `${actor.fullName} ${m.verb} ${formatMoney(expense.amount)} expense — ${expense.description}${note ? ` ("${note}")` : ""}`,
       oldValues: { status: expense.status },
-      newValues: { status: m.status, comment: comment?.trim() || null },
+      newValues: { status: m.status, comment: note },
     });
 
     if (decision !== "START") {
@@ -744,15 +763,54 @@ export async function reviewExpense(actor: CurrentUser, id: string, decision: Re
         APPROVE: `Expense approved: ${formatMoney(expense.amount)}`,
         REJECT: `Expense needs correction: ${formatMoney(expense.amount)}`,
         CLARIFY: `Question about your ${formatMoney(expense.amount)} expense`,
+        EVIDENCE: `Receipt requested for your ${formatMoney(expense.amount)} expense`,
       } as const;
       await notifyUsers(tx, [expense.staffId], {
         type: `EXPENSE_${decision}`,
         title: titles[decision],
-        body: comment?.trim() ? `${expense.description} — "${comment.trim()}"` : expense.description,
+        body: note ? `${expense.description} — "${note}"` : expense.description,
         link: `/expenses/${id}`,
       });
     }
     if (decision === "APPROVE") await maybeNotifyReadyToReconcile(tx, actor, expense.allocationId);
+  });
+}
+
+/**
+ * A reviewer's note on an expense at any stage — e.g. the reason for a decision or a follow-up
+ * action. Internal notes are visible to finance only; others are shown to (and notify) the staff member.
+ */
+export async function addReviewNote(actor: CurrentUser, id: string, comment: string, internal: boolean) {
+  if (!can(actor.role, "expenses.review")) throw forbidden();
+  if (!comment?.trim()) throw new DomainError("Write the note.", "VALIDATION", { comment: "Required." });
+  await db.transaction(async (tx) => {
+    const expense = (await tx.select().from(expenses).where(eq(expenses.id, id)))[0];
+    if (!expense) throw notFound("Expense not found.");
+    const allocation = await tx.query.allocations.findFirst({ where: eq(allocations.id, expense.allocationId) });
+    if (!allocation || allocation.organisationId !== actor.organisationId) throw notFound();
+    await tx.insert(expenseReviews).values({ expenseId: id, reviewerId: actor.id, action: "COMMENT", comment: comment.trim(), internal });
+    await audit(tx, {
+      organisationId: actor.organisationId,
+      userId: actor.id,
+      entityType: "EXPENSE",
+      entityId: id,
+      entityRef: expense.reference,
+      // Internal notes stay off the allocation timeline, which staff can see.
+      allocationId: internal ? null : expense.allocationId,
+      action: internal ? "INTERNAL_NOTE" : "NOTE",
+      summary: internal
+        ? `${actor.fullName} added an internal note on ${expense.reference}`
+        : `${actor.fullName} added a note on ${expense.reference}: "${comment.trim()}"`,
+      newValues: { note: comment.trim(), internal },
+    });
+    if (!internal && expense.staffId !== actor.id) {
+      await notifyUsers(tx, [expense.staffId], {
+        type: "EXPENSE_NOTE",
+        title: `Note from finance on your ${formatMoney(expense.amount)} expense`,
+        body: comment.trim(),
+        link: `/expenses/${id}`,
+      });
+    }
   });
 }
 
@@ -818,7 +876,7 @@ export async function addExpenseDocuments(actor: CurrentUser, expenseId: string,
   if (!ownerCanAdd && !financeCanAdd) throw forbidden("You can't add documents to this expense.");
   if (!files.receipts.length && !files.supporting.length) throw new DomainError("Choose a file to upload.", "VALIDATION");
   const stored = await storeUploads(actor.organisationId, files);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     for (const s of stored) {
       const [doc] = await tx
         .insert(documents)
@@ -835,6 +893,36 @@ export async function addExpenseDocuments(actor: CurrentUser, expenseId: string,
         summary: `${actor.fullName} attached ${doc.fileName} to ${expense.reference}`,
       });
     }
+    // Evidence added after submission: record it on the history, and if finance had asked for it,
+    // send the expense straight back to the review queue.
+    if (!isOwner) return { resubmitted: false };
+    const current = (await tx.select().from(expenses).where(eq(expenses.id, expenseId)).for("update"))[0];
+    if (!current || current.status === "DRAFT") return { resubmitted: false };
+    const lastDecision = await tx
+      .select({ action: expenseReviews.action })
+      .from(expenseReviews)
+      .where(and(eq(expenseReviews.expenseId, expenseId), ne(expenseReviews.action, "COMMENT")))
+      .orderBy(desc(expenseReviews.createdAt))
+      .limit(1);
+    const evidenceRequested = current.status === "NEEDS_CLARIFICATION" && lastDecision[0]?.action === "REQUEST_EVIDENCE";
+    if (evidenceRequested) {
+      await tx.update(expenses).set({ status: "SUBMITTED", submittedAt: new Date() }).where(eq(expenses.id, expenseId));
+    }
+    await tx.insert(expenseReviews).values({
+      expenseId,
+      reviewerId: actor.id,
+      action: "EVIDENCE_ADDED",
+      comment: `${stored.length} file${stored.length === 1 ? "" : "s"} added${evidenceRequested ? " — sent back for review" : ""}`,
+    });
+    const n = {
+      type: "EVIDENCE_ADDED",
+      title: `${actor.fullName} added evidence to ${expense.reference}`,
+      body: `${formatMoney(expense.amount)} — ${expense.description}${evidenceRequested ? ". It's back in the review queue." : ""}`,
+      link: `/expenses/${expenseId}`,
+    };
+    if (current.reviewedBy && current.reviewedBy !== actor.id) await notifyUsers(tx, [current.reviewedBy], n);
+    else await notifyRoles(tx, actor.organisationId, FINANCE_ROLES, n, actor.id);
+    return { resubmitted: evidenceRequested };
   });
 }
 
@@ -871,8 +959,17 @@ export async function removeDocument(actor: CurrentUser, documentId: string) {
 }
 
 /** Access check used by the document download route. */
-export async function canAccessDocument(actor: CurrentUser, doc: { organisationId: string; expenseId: string | null; allocationId: string | null; claimId: string | null }) {
+export async function canAccessDocument(
+  actor: CurrentUser,
+  doc: { organisationId: string; expenseId: string | null; allocationId: string | null; claimId: string | null; feedbackId: string | null },
+) {
   if (doc.organisationId !== actor.organisationId) return false;
+  // Feedback screenshots: only the sender and administrators handling feedback.
+  if (doc.feedbackId) {
+    if (can(actor.role, "feedback.manage")) return true;
+    const f = await db.query.feedback.findFirst({ where: eq(feedback.id, doc.feedbackId) });
+    return !!f && f.userId === actor.id;
+  }
   if (can(actor.role, "documents.viewAll")) return true;
   if (doc.expenseId) {
     const e = await db.query.expenses.findFirst({ where: eq(expenses.id, doc.expenseId) });

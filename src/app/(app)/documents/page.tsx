@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Form from "next/form";
 import Link from "next/link";
 import { Download, Eye, FileText, ImageIcon, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ export default async function DocumentsPage({ searchParams }: { searchParams: Pr
   return (
     <div>
       <PageHeader title="Documents" description="Every receipt, transfer slip and supporting document in one place." />
-      <form method="get" className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
+      <Form action="/documents" className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <Input name="q" defaultValue={sp.q} placeholder="Search file name, expense, vendor or reference…" className="pl-9" aria-label="Search documents" />
@@ -43,7 +44,7 @@ export default async function DocumentsPage({ searchParams }: { searchParams: Pr
           ))}
         </Select>
         <Button type="submit" variant="secondary">Filter</Button>
-      </form>
+      </Form>
       <p className="mb-3 text-sm text-gray-600">{result.count} document{result.count === 1 ? "" : "s"}</p>
       <Card className="overflow-hidden">
         {result.rows.length ? (

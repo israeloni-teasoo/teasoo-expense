@@ -36,6 +36,8 @@ export function toActionError(err: unknown): ActionResult<never> {
     const digest = (err as { digest: string }).digest;
     if (digest.startsWith("NEXT_")) throw err;
   }
-  console.error(err);
-  return { ok: false, error: "Something went wrong. Please try again." };
+  // A short reference ties what the user sees to the server log line (search the logs for "ref=").
+  const ref = Math.random().toString(36).slice(2, 8).toUpperCase();
+  console.error(`[error ref=${ref}]`, err);
+  return { ok: false, error: `Something went wrong (ref ${ref}). Please try again — if it keeps happening, send this reference to your administrator.` };
 }

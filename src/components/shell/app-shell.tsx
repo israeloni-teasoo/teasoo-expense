@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   ArrowLeftRight,
   BarChart3,
@@ -16,6 +16,7 @@ import {
   Home,
   LogOut,
   Menu,
+  MessageSquarePlus,
   Plus,
   Receipt,
   Scale,
@@ -30,6 +31,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Logo } from "./logo";
+import { NavigationProgress } from "./navigation-progress";
+import { FeedbackButton } from "@/components/forms/feedback-forms";
+import { PendingButton } from "@/components/ui/pending-button";
 
 const ICONS = {
   home: Home,
@@ -52,6 +56,7 @@ const ICONS = {
   shield: Shield,
   claims: HandCoins,
   book: BookOpen,
+  feedback: MessageSquarePlus,
 } as const;
 export type IconName = keyof typeof ICONS;
 
@@ -134,9 +139,9 @@ function SidebarContent({
           </span>
         </Link>
         <form action={logoutAction}>
-          <button className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-brand-200 hover:bg-brand-800/60 hover:text-white">
+          <PendingButton className="mt-1 w-full !justify-start gap-3 rounded-lg px-3 py-2 text-sm text-brand-200 hover:bg-brand-800/60 hover:text-white">
             <LogOut className="h-[18px] w-[18px]" /> Sign out
-          </button>
+          </PendingButton>
         </form>
       </div>
     </div>
@@ -172,6 +177,9 @@ export function AppShell({
 
   return (
     <div className="min-h-dvh">
+      <Suspense fallback={null}>
+        <NavigationProgress />
+      </Suspense>
       {/* Desktop sidebar */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">
         <SidebarContent sections={sections} user={user} pathname={pathname} logoutAction={logoutAction} />
@@ -199,7 +207,8 @@ export function AppShell({
               <Logo />
             </Link>
             <p className="hidden truncate text-sm font-medium text-gray-500 lg:block">{orgName}</p>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-1 sm:gap-2">
+              <FeedbackButton />
               <Link href="/notifications" className="relative rounded-full p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700" aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}>
                 <Bell className="h-5 w-5" />
                 {unread > 0 && (

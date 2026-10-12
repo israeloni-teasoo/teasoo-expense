@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { formatBytes, PAYMENT_METHODS } from "@/lib/format";
 import { formatMoney, koboToInput, parseMoney } from "@/lib/money";
 import { suggestCategory } from "@/lib/suggest";
+import { receiptRequired } from "@/lib/receipt-rules";
 import { canScan, readReceipt } from "@/lib/ocr";
 import { parseReceiptText, type ReceiptFields } from "@/lib/receipt-parser";
 import { formatDate } from "@/lib/dates";
@@ -109,6 +110,7 @@ function Steps({
   returned: boolean;
 }) {
   const { state } = useFormState();
+  const alreadySubmitted = initial.status === "SUBMITTED";
   const [step, setStep] = useState(initial.allocationId ? 1 : 0);
   const [allocationId, setAllocationId] = useState(initial.allocationId ?? (funds.length === 1 ? funds[0].id : ""));
   const [amountText, setAmountText] = useState(koboToInput(initial.amount));
@@ -136,7 +138,7 @@ function Steps({
   const reserved = initial.allocationId === allocationId ? (initial.reserved ?? 0) : 0;
   const availableBefore = fund ? fund.available + reserved : 0;
   const remainingAfter = availableBefore - (amount ?? 0);
-  const receiptNeeded = requireReceipt || !!category?.receiptRequired;
+  const receiptNeeded = receiptRequired({ allocationKind: fund?.kind, orgRequiresReceipts: requireReceipt, categoryRequiresReceipt: !!category?.receiptRequired });
   const docCount = existingDocs.length + receipts.length + supporting.length;
 
   // Jump back to the step that has a server-side field error.
@@ -410,7 +412,11 @@ function Steps({
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Upload evidence</h2>
           <p className="mt-1 text-sm text-gray-500">
-            {receiptNeeded ? "A receipt is required before you can submit." : "Attach a receipt if you have one."} JPG, PNG, WebP or PDF, up to {maxUploadMb} MB each.
+            {receiptNeeded
+              ? fund?.kind === "REIMBURSEMENT"
+                ? "Personal-spend claims need a receipt before you can submit."
+                : "A receipt is required before you can submit."
+              : "Optional — attach it now if you have it, or submit and add it later from the expense page."} JPG, PNG, WebP or PDF, up to {maxUploadMb} MB each.
           </p>
         </div>
 
@@ -517,14 +523,14 @@ function Steps({
       {/* Navigation */}
       <div className="sticky bottom-16 z-10 -mx-4 mt-6 flex items-center gap-2 border-t border-gray-200 bg-gray-50/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 lg:bottom-0">
         {step > 0 && (
-          <Button type="button" variant="secondary" onClick={() => setStep((s) => s - 1)}>
-            <ChevronLeft className="h-4 w-4" /> Back
+          <Button type="button" variant="secondary" onClick={() => setStep((s) => s - 1)} className="px-3 sm:px-4" aria-label="Back">
+            <ChevronLeft className="h-4 w-4" /> <span className="hidden sm:inline">Back</span>
           </Button>
         )}
         <div className="ml-auto flex gap-2">
           {step < 3 ? (
             <>
-              {step >= 1 && (
+              {step >= 1 && !alreadySubmitted && (
                 <SubmitButton variant="ghost" name="intent" value="draft" className="hidden sm:inline-flex">
                   Save draft
                 </SubmitButton>
@@ -535,11 +541,13 @@ function Steps({
             </>
           ) : (
             <>
-              <SubmitButton variant="secondary" name="intent" value="draft" pendingText="Saving…">
-                Save draft
-              </SubmitButton>
-              <SubmitButton name="intent" value="submit" pendingText="Submitting…">
-                <Check className="h-4 w-4" /> {editing && returned ? "Resubmit" : "Submit expense"}
+              {!alreadySubmitted && (
+                <SubmitButton variant="secondary" name="intent" value="draft" pendingText="Saving…">
+                  Save draft
+                </SubmitButton>
+              )}
+              <SubmitButton name="intent" value="submit" pendingText={alreadySubmitted ? "Saving…" : "Submitting…"}>
+                <Check className="h-4 w-4" /> {alreadySubmitted ? "Save changes" : editing && returned ? "Resubmit" : "Submit expense"}
               </SubmitButton>
             </>
           )}

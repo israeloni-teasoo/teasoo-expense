@@ -8,7 +8,7 @@ async function main() {
   if (!url || !key) throw new Error("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY first.");
   const res = await fetch(`${url}/storage/v1/bucket`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, apikey: key, "Content-Type": "application/json" },
+    headers: { ...(key.startsWith("eyJ") ? { Authorization: `Bearer ${key}` } : {}), apikey: key, "Content-Type": "application/json" },
     body: JSON.stringify({
       id: bucket,
       name: bucket,

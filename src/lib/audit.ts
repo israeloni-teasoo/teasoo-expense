@@ -6,7 +6,7 @@ import { requestMeta } from "./request-context";
 export type AuditEntry = {
   organisationId: string;
   userId: string | null;
-  entityType: "ALLOCATION" | "EXPENSE" | "DOCUMENT" | "RETURN" | "CLAIM" | "RECONCILIATION" | "USER" | "CATEGORY" | "DEPARTMENT" | "PROJECT" | "SETTINGS" | "AUTH" | "EXPORT";
+  entityType: "ALLOCATION" | "EXPENSE" | "DOCUMENT" | "RETURN" | "CLAIM" | "RECONCILIATION" | "USER" | "CATEGORY" | "DEPARTMENT" | "PROJECT" | "SETTINGS" | "AUTH" | "EXPORT" | "FEEDBACK";
   entityId?: string | null;
   entityRef?: string | null;
   allocationId?: string | null;

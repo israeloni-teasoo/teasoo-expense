@@ -6,8 +6,8 @@ export const PENDING_STATUSES: ExpenseStatus[] = ["SUBMITTED", "UNDER_REVIEW", "
 export const APPROVED_STATUSES: ExpenseStatus[] = ["APPROVED", "RECONCILED"];
 /** Statuses that must be resolved before an allocation can be reconciled. */
 export const UNRESOLVED_STATUSES: ExpenseStatus[] = ["DRAFT", "SUBMITTED", "UNDER_REVIEW", "NEEDS_CLARIFICATION", "REJECTED"];
-/** Statuses a staff member can still edit. */
-export const EDITABLE_STATUSES: ExpenseStatus[] = ["DRAFT", "REJECTED", "NEEDS_CLARIFICATION"];
+/** Statuses a staff member can still edit (submitted ones only until a reviewer picks them up). */
+export const EDITABLE_STATUSES: ExpenseStatus[] = ["DRAFT", "SUBMITTED", "REJECTED", "NEEDS_CLARIFICATION"];
 
 export type BalanceInput = {
   initialAmount: number;
