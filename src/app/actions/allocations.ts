@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireActor } from "@/lib/auth/current";
 import { type ActionResult, toActionError } from "@/lib/errors";
+import { formatMoney } from "@/lib/money";
 import {
   addAdjustment,
   createAllocation,
@@ -10,6 +11,7 @@ import {
   reconcileAllocation,
   recordReturn,
   setAllocationStatus,
+  settlePersonalSpend,
   updateAllocationDetails,
 } from "@/lib/services/allocations";
 import { filesFrom } from "@/lib/storage";
@@ -131,6 +133,27 @@ export async function setAllocationStatusAction(_: Prev, fd: FormData): Promise<
     await setAllocationStatus(actor, str(fd, "allocationId"), status, str(fd, "reason"));
     revalidatePath("/", "layout");
     return { ok: true, message: status === "VOIDED" ? "Allocation voided." : status === "ARCHIVED" ? "Allocation archived." : "Allocation restored." };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function settlePersonalSpendAction(_: Prev, fd: FormData): Promise<ActionResult> {
+  try {
+    const actor = await requireActor("allocations.reconcile");
+    const method = str(fd, "method") === "OFFSET" ? "OFFSET" : "REFUND";
+    const r = await settlePersonalSpend(actor, str(fd, "allocationId"), {
+      method,
+      amount: money(fd, "amount")!,
+      sourceAllocationId: opt(fd, "sourceAllocationId"),
+      reference: opt(fd, "reference"),
+      note: opt(fd, "note"),
+    });
+    revalidatePath("/", "layout");
+    return {
+      ok: true,
+      message: `${method === "OFFSET" ? "Settled from allocated funds" : "Refund recorded"}.${r.remaining > 0 ? ` ${formatMoney(r.remaining)} still owed.` : " Fully settled — you can now reconcile this record."}`,
+    };
   } catch (e) {
     return toActionError(e);
   }

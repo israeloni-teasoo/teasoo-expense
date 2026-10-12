@@ -27,7 +27,8 @@ import { FINANCE_ROLES, notifyRoles, notifyUsers } from "@/lib/notify";
 import { can } from "@/lib/rbac";
 import { nextReference } from "@/lib/refs";
 import { storeUpload, type StoredFile } from "@/lib/storage";
-import { canViewAllocation, lockAllocation, maybeNotifyReadyToReconcile } from "./allocations";
+import { canViewAllocation, createPersonalSpendRecord, lockAllocation, maybeNotifyReadyToReconcile } from "./allocations";
+import { DEFAULT_PERSONAL_SPEND_PURPOSE, PERSONAL_SPEND_CHOICE } from "@/lib/personal-spend";
 import { loadBalance } from "./balances";
 import { getSettings } from "./org";
 
@@ -393,6 +394,22 @@ export async function saveExpense(actor: CurrentUser, expenseId: string | null, 
     where: and(eq(expenseCategories.id, input.categoryId), eq(expenseCategories.organisationId, actor.organisationId)),
   });
   if (!category || category.archived) throw new DomainError("Choose an active category.", "VALIDATION", { categoryId: "Invalid category." });
+
+  // "My own money": use the staff member's open personal-spend record, creating it if needed.
+  if (input.allocationId === PERSONAL_SPEND_CHOICE) {
+    const open = await db.query.allocations.findFirst({
+      where: and(
+        eq(allocations.staffId, actor.id),
+        eq(allocations.kind, "REIMBURSEMENT"),
+        eq(allocations.status, "ACTIVE"),
+        eq(allocations.purpose, DEFAULT_PERSONAL_SPEND_PURPOSE),
+      ),
+    });
+    input = {
+      ...input,
+      allocationId: open?.id ?? (await createPersonalSpendRecord(actor, { purpose: DEFAULT_PERSONAL_SPEND_PURPOSE, projectId: input.projectId })).id,
+    };
+  }
 
   // Validate the request against the current state before writing any files.
   const preAllocation = await db.query.allocations.findFirst({ where: eq(allocations.id, input.allocationId) });

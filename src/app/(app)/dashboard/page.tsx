@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, Banknote, Clock, FileWarning, Hourglass, Lightbulb, Plus, Scale, Users, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowRight, Banknote, Clock, FileWarning, HandCoins, Hourglass, Lightbulb, Plus, Scale, Users, Wallet } from "lucide-react";
 import { AllocationCard } from "@/components/domain/allocation-card";
 import { ExpenseTable } from "@/components/domain/expense-table";
 import { RankedBars, WeeklyBars } from "@/components/charts/charts";
@@ -10,7 +10,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Alert, EmptyState, PageHeader, StatCard } from "@/components/ui/misc";
 import { requireUser } from "@/lib/auth/current";
 import { formatDate, relativeTime } from "@/lib/dates";
-import { formatMoney } from "@/lib/money";
+import { formatMoney, formatMoneyCompact } from "@/lib/money";
 import { can } from "@/lib/rbac";
 import { financeDashboard, staffDashboard } from "@/lib/services/reports";
 import { cn } from "@/lib/cn";
@@ -68,6 +68,16 @@ async function StaffDashboard() {
         <StatCard label="Total spent" value={formatMoney(t.spent)} hint="Approved + awaiting review" />
         <StatCard label="Pending review" value={formatMoney(t.pending)} hint="Waiting for finance" tone={t.pending ? "amber" : "default"} />
       </section>
+
+      {(t.personalOwed > 0 || t.personalPending > 0) && (
+        <div className="mt-3 flex flex-col gap-1 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-950 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            <span className="font-semibold">Owed to you: {formatMoney(t.personalOwed)}</span>
+            {t.personalPending > 0 && <span className="text-violet-800"> · {formatMoney(t.personalPending)} awaiting review</span>}
+          </p>
+          <p className="text-xs text-violet-800">Money you spent from your own pocket — not taken from your allocated funds. Finance will refund you or settle it.</p>
+        </div>
+      )}
 
       {d.attention.length > 0 && (
         <Card className="mt-6 border-amber-200">
@@ -170,7 +180,7 @@ async function FinanceDashboard() {
         <StatCard label="Outstanding balance" value={formatMoney(m.outstanding)} hint={`Held by ${m.staffWithOutstanding} staff`} href="/staff" />
       </section>
 
-      <section className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+      <section className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7">
         {[
           { label: "Active allocations", value: m.activeAllocations, icon: Wallet, href: "/allocations?status=ACTIVE" },
           { label: "Pending expenses", value: m.pendingCount, icon: Hourglass, href: canReview ? "/review" : "/expenses?status=review" },
@@ -178,6 +188,7 @@ async function FinanceDashboard() {
           { label: "Rejected", value: m.rejectedCount, icon: AlertTriangle, href: "/expenses?status=REJECTED" },
           { label: "Without receipts", value: m.noReceiptCount, icon: FileWarning, href: "/expenses?receipt=no", alert: m.noReceiptCount > 0 },
           { label: "Ready to reconcile", value: m.readyToReconcile, icon: Scale, href: "/reconciliation" },
+          { label: "Owed to staff (personal spend)", value: formatMoneyCompact(m.owedToStaff), icon: HandCoins, href: "/reconciliation#personal", alert: m.owedToStaff > 0 },
         ].map((x) => (
           <Link key={x.label} href={x.href} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-3 shadow-sm hover:shadow-md">
             <span className={cn("rounded-lg p-2", x.alert ? "bg-red-50 text-red-600" : "bg-gray-100 text-gray-500")}>

@@ -93,3 +93,11 @@ export function computeBalance(input: BalanceInput): BalanceSummary {
 }
 
 export const EMPTY_BALANCE = computeBalance({ initialAmount: 0, adjustments: [], expenses: [], returns: [] });
+
+/**
+ * Personal spend (money staff paid from their own pocket) is never part of their allocated funds.
+ * What the company owes them is the approved amount not yet settled (refunded or offset).
+ */
+export function personalSpendOwed(b: BalanceSummary) {
+  return Math.max(b.approved - b.adjustments - b.returned, 0);
+}

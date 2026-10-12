@@ -12,6 +12,7 @@ import {
   reconcileAction,
   recordReturnAction,
   setAllocationStatusAction,
+  settlePersonalSpendAction,
   updateAllocationAction,
 } from "@/app/actions/allocations";
 import { createClaimAction } from "@/app/actions/claims";
@@ -322,7 +323,7 @@ export function PersonalSpendForm({ projects, today }: { projects: Opt[]; today:
   return (
     <ActionForm action={createPersonalSpendAction}>
       <p className="text-sm text-gray-600">
-        Paid for something work-related with your own money? Open a personal-spend record, log the expenses with receipts, then raise a reimbursement claim.
+        Paid for something work-related with your own money? You can also just pick “My own money” when adding an expense. A separate record is useful to group spending for one purpose (e.g. a trip). It never reduces your allocated funds; once approved, finance refunds you or settles it from funds you hold.
       </p>
       <FormField name="purpose" label="What was it for?" required>
         <Input id="purpose" name="purpose" placeholder="e.g. Emergency generator repair" />
@@ -342,6 +343,74 @@ export function PersonalSpendForm({ projects, today }: { projects: Opt[]; today:
       </div>
       <div className="flex justify-end">
         <SubmitButton pendingText="Creating…">Continue to add expenses</SubmitButton>
+      </div>
+    </ActionForm>
+  );
+}
+
+export function SettlePersonalSpendForm({
+  allocationId,
+  owed,
+  sources,
+}: {
+  allocationId: string;
+  owed: number;
+  /** The staff member's funded allocations that still hold unspent money. */
+  sources: { id: string; label: string; available: number }[];
+}) {
+  const [method, setMethod] = useState<"REFUND" | "OFFSET">("REFUND");
+  const [sourceId, setSourceId] = useState(sources[0]?.id ?? "");
+  const source = sources.find((s) => s.id === sourceId);
+  const max = method === "OFFSET" && source ? Math.min(owed, source.available) : owed;
+  return (
+    <ActionForm action={settlePersonalSpendAction} key={`${method}:${sourceId}`}>
+      <input type="hidden" name="allocationId" value={allocationId} />
+      <input type="hidden" name="method" value={method} />
+      <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="How is it being settled?">
+        {(
+          [
+            ["REFUND", "Refund by company", "The company pays the staff member back."],
+            ["OFFSET", "From allocated funds", sources.length ? "Use unspent money they're holding — they keep it instead of returning it." : "They hold no unspent allocated funds."],
+          ] as const
+        ).map(([value, title, desc]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={method === value}
+            disabled={value === "OFFSET" && !sources.length}
+            onClick={() => setMethod(value)}
+            className={`rounded-lg p-3 text-left text-sm ring-1 ring-inset transition disabled:cursor-not-allowed disabled:opacity-50 ${method === value ? "bg-brand-50 ring-brand-500" : "bg-white ring-gray-200 hover:bg-gray-50"}`}
+          >
+            <span className="block font-medium text-gray-900">{title}</span>
+            <span className="mt-0.5 block text-xs text-gray-500">{desc}</span>
+          </button>
+        ))}
+      </div>
+      {method === "OFFSET" && (
+        <FormField name="sourceAllocationId" label="Settle from" required>
+          <Select id="sourceAllocationId" name="sourceAllocationId" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+            {sources.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label} — {formatMoney(s.available)} unspent
+              </option>
+            ))}
+          </Select>
+        </FormField>
+      )}
+      <FormField name="amount" label="Amount" required hint={`Up to ${formatMoney(max)}`}>
+        <MoneyInput id="amount" name="amount" defaultValue={koboToInput(max)} />
+      </FormField>
+      {method === "REFUND" && (
+        <FormField name="reference" label="Payment reference" hint="e.g. bank transfer reference">
+          <Input id="reference" name="reference" />
+        </FormField>
+      )}
+      <FormField name="note" label="Note">
+        <Textarea id="note" name="note" rows={2} />
+      </FormField>
+      <div className="flex justify-end">
+        <SubmitButton pendingText="Settling…">{method === "OFFSET" ? "Settle from allocated funds" : "Record refund"}</SubmitButton>
       </div>
     </ActionForm>
   );

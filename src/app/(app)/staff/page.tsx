@@ -68,6 +68,7 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
                       <td className="px-4 py-3 text-right font-medium tabular-nums">
                         {p.outstanding > 0 ? formatMoney(p.outstanding) : <span className="text-gray-400">—</span>}
                         {p.overdue > 0 && <Badge tone="red" className="ml-2">{p.overdue} overdue</Badge>}
+                        {p.owedToStaff > 0 && <span className="block text-xs font-normal text-violet-700">owed {formatMoney(p.owedToStaff)}</span>}
                       </td>
                       <td className="px-4 py-3 text-gray-500">{p.lastActivity ? relativeTime(p.lastActivity) : "—"}</td>
                       <td className="px-4 py-3 text-right">

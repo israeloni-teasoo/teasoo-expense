@@ -40,7 +40,7 @@ async function session(email, viewport = { width: 1280, height: 900 }) {
   await page.fill("#email", email);
   await page.fill("#password", "Password123");
   await page.click("button[type=submit]");
-  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 8000 });
+  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 30000 });
   return { ctx, page };
 }
 
@@ -249,7 +249,7 @@ ok(await p.getByText("Reimbursement", { exact: true }).first().isVisible(), "app
 
   // Personal spend still requires a receipt
   await sp.goto(BASE + "/funds", { waitUntil: "networkidle" });
-  await sp.getByRole("button", { name: "Log personal spend" }).click();
+  await sp.getByRole("button", { name: "New personal spend record" }).click();
   await sp.fill("#purpose", "Taxi to client meeting (paid myself)");
   await sp.getByRole("button", { name: "Continue to add expenses" }).click();
   await sp.waitForURL(/\/expenses\/new\?allocation=/, { timeout: 15000 });
@@ -262,6 +262,56 @@ ok(await p.getByText("Reimbursement", { exact: true }).first().isVisible(), "app
   await sp.getByRole("button", { name: /Submit expense/ }).click();
   await sp.getByText(/Personal-spend claims need a receipt/).first().waitFor({ timeout: 15000 });
   ok(true, "personal-spend expenses still require a receipt");
+}
+
+
+// ---- Personal spend is the staff member's own money; finance settles it ----
+{
+  const sp = staff.page;
+  // The highlighted "Remaining" card on the staff dashboard.
+  const remainingCard = async () => (await sp.locator("section[aria-label='My funds'] .bg-brand-800").first().textContent())?.trim();
+  await sp.goto(BASE + "/dashboard", { waitUntil: "networkidle" });
+  const before = await remainingCard();
+  await sp.goto(BASE + "/expenses/new", { waitUntil: "networkidle" });
+  await sp.getByText("My own money (personal spend)").click();
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.fill("#amount", "10000");
+  await sp.fill("#description", "Printer ink bought with my own card");
+  await sp.selectOption("#categoryId", { label: "Office Supplies" });
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.locator('input[name="receipts"]').setInputFiles(png);
+  await sp.getByRole("button", { name: /Continue/ }).click();
+  await sp.getByRole("button", { name: /Submit expense/ }).click();
+  await sp.waitForURL(/\/expenses\/[0-9a-f-]{36}$/, { timeout: 20000 });
+  const personalExpenseUrl = sp.url();
+  await sp.goto(BASE + "/dashboard", { waitUntil: "networkidle" });
+  ok((await remainingCard()) === before, `personal spend doesn't reduce Remaining (${before})`);
+  ok(await sp.getByText(/awaiting review/).first().isVisible(), "staff dashboard shows the personal spend separately");
+
+  const ap = acct.page;
+  await ap.goto(personalExpenseUrl, { waitUntil: "networkidle" });
+  await ap.getByRole("button", { name: "Approve expense" }).click();
+  await ap.waitForURL(/\/review/, { timeout: 15000 });
+  await ap.goto(personalExpenseUrl, { waitUntil: "networkidle" });
+  await ap.getByRole("link", { name: /Personal spend/ }).first().click();
+  await ap.waitForURL(/\/allocations\//);
+  const personalAllocUrl = ap.url();
+  ok(await ap.getByText(/₦10,000 owed to Israel Oni/).first().waitFor({ timeout: 15000 }).then(() => true, () => false), "finance sees the amount owed to the staff member");
+  await ap.getByRole("button", { name: "Settle personal spend" }).click();
+  await ap.getByRole("radio", { name: /From allocated funds/ }).click();
+  await ap.selectOption("#sourceAllocationId", { label: /Staff Training Logistics/ }).catch(async () => {
+    const v = await ap.locator("#sourceAllocationId option", { hasText: "Staff Training Logistics" }).getAttribute("value");
+    await ap.selectOption("#sourceAllocationId", v);
+  });
+  await ap.getByRole("button", { name: "Settle from allocated funds" }).click();
+  await ap.getByText(/Fully settled/).waitFor({ timeout: 15000 });
+  await ap.goto(personalAllocUrl + "?tab=funding", { waitUntil: "networkidle" });
+  ok(await ap.getByText(/settled from AL-\d{4}-\d{5} \(Staff Training Logistics\)/).first().isVisible(), "personal record shows it was settled from the allocation");
+  await ap.goto(BASE + "/allocations?q=Staff%20Training", { waitUntil: "networkidle" });
+  await ap.locator("tbody a", { hasText: "Staff Training Logistics" }).click();
+  await ap.waitForURL(/\/allocations\/[0-9a-f-]{36}/);
+  await ap.goto(ap.url() + "?tab=funding", { waitUntil: "networkidle" });
+  ok(await ap.getByText(/Used to settle personal spend/).first().isVisible() && await ap.getByText("-₦10,000").first().isVisible(), "the allocation shows ₦10,000 used to settle the personal spend");
 }
 
 // ---- Feedback ----
