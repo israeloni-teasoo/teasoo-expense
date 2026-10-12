@@ -1,0 +1,130 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { requireActor } from "@/lib/auth/current";
+import { type ActionResult, toActionError } from "@/lib/errors";
+import { createUser, resendLoginDetails, saveCategory, saveDepartment, saveProject, saveSettings, updateUser } from "@/lib/services/admin";
+import type { Role } from "@/db/schema";
+import { bool, money, opt, str } from "./_helpers";
+
+type Prev = ActionResult<unknown> | null;
+
+export type IssuedCredentials = { email: string; password: string | null; emailed: boolean | null; google: boolean };
+
+export async function saveUserAction(_: Prev, fd: FormData): Promise<ActionResult<IssuedCredentials>> {
+  try {
+    const id = opt(fd, "userId");
+    const actor = await requireActor(id ? "admin.users" : undefined);
+    const input = {
+      firstName: str(fd, "firstName"),
+      lastName: str(fd, "lastName"),
+      email: str(fd, "email"),
+      phone: opt(fd, "phone"),
+      jobTitle: opt(fd, "jobTitle"),
+      role: (str(fd, "role") || "STAFF") as Role,
+      departmentId: opt(fd, "departmentId"),
+      password: opt(fd, "password"),
+      status: (str(fd, "status") || "ACTIVE") as "ACTIVE" | "SUSPENDED",
+      sendCredentials: bool(fd, "sendCredentials"),
+    };
+    if (id) {
+      await updateUser(actor, id, input);
+      revalidatePath("/admin/users");
+      return { ok: true, message: "User updated." };
+    }
+    const r = await createUser(actor, input);
+    revalidatePath("/admin/users");
+    revalidatePath("/staff");
+    return {
+      ok: true,
+      message: r.google ? "User added. They sign in with Google." : r.emailed ? `Login details emailed to ${r.user.email}.` : "User added.",
+      data: { email: r.user.email, password: r.password, emailed: r.emailed, google: r.google },
+    };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function resendLoginAction(_: Prev, fd: FormData): Promise<ActionResult<IssuedCredentials>> {
+  try {
+    const actor = await requireActor();
+    const r = await resendLoginDetails(actor, str(fd, "userId"), { email: bool(fd, "sendCredentials") });
+    return {
+      ok: true,
+      message: r.emailed ? "New login details emailed." : "New password issued.",
+      data: { email: str(fd, "email"), password: r.password, emailed: r.emailed, google: false },
+    };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function saveCategoryAction(_: Prev, fd: FormData): Promise<ActionResult> {
+  try {
+    const actor = await requireActor("admin.config");
+    await saveCategory(actor, opt(fd, "id"), {
+      name: str(fd, "name"),
+      description: opt(fd, "description"),
+      keywords: opt(fd, "keywords"),
+      receiptRequired: bool(fd, "receiptRequired"),
+      archived: bool(fd, "archived"),
+    });
+    revalidatePath("/admin/categories");
+    return { ok: true, message: "Category saved." };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function saveDepartmentAction(_: Prev, fd: FormData): Promise<ActionResult> {
+  try {
+    const actor = await requireActor("admin.config");
+    await saveDepartment(actor, opt(fd, "id"), { name: str(fd, "name"), code: opt(fd, "code"), archived: bool(fd, "archived") });
+    revalidatePath("/admin/departments");
+    return { ok: true, message: "Department saved." };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function saveProjectAction(_: Prev, fd: FormData): Promise<ActionResult> {
+  try {
+    const actor = await requireActor("admin.config");
+    await saveProject(actor, opt(fd, "id"), {
+      name: str(fd, "name"),
+      code: opt(fd, "code"),
+      description: opt(fd, "description"),
+      budget: money(fd, "budget", { required: false }),
+      departmentId: opt(fd, "departmentId"),
+      startDate: opt(fd, "startDate"),
+      endDate: opt(fd, "endDate"),
+      archived: bool(fd, "archived"),
+    });
+    revalidatePath("/admin/projects");
+    return { ok: true, message: "Project saved." };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+export async function saveSettingsAction(_: Prev, fd: FormData): Promise<ActionResult> {
+  try {
+    const actor = await requireActor("admin.config");
+    await saveSettings(actor, {
+      name: str(fd, "name"),
+      settings: {
+        blockOverspend: bool(fd, "blockOverspend"),
+        duplicateDetection: bool(fd, "duplicateDetection"),
+        blockFutureDates: bool(fd, "blockFutureDates"),
+        requireReceipt: bool(fd, "requireReceipt"),
+        maxUploadMb: Number(str(fd, "maxUploadMb")),
+        nearDepletionPercent: Number(str(fd, "nearDepletionPercent")),
+        unusualMultiplier: Number(str(fd, "unusualMultiplier")),
+      },
+    });
+    revalidatePath("/", "layout");
+    return { ok: true, message: "Settings saved." };
+  } catch (e) {
+    return toActionError(e);
+  }
+}
