@@ -37,7 +37,7 @@ function readExpense(fd: FormData): ExpenseInput {
   };
 }
 
-export async function saveExpenseAction(_: Prev, fd: FormData): Promise<ActionResult> {
+export async function saveExpenseAction(_: Prev, fd: FormData): Promise<ActionResult<{ id: string; reference: string; available: number }>> {
   try {
     const actor = await requireActor("funds.own");
     const id = opt(fd, "expenseId");
@@ -55,7 +55,9 @@ export async function saveExpenseAction(_: Prev, fd: FormData): Promise<ActionRe
       message: submit
         ? `Expense submitted for review. ${balance.available >= 0 ? `${formatMoney(balance.available)} remaining.` : `Over budget by ${formatMoney(-balance.available)}.`}`
         : "Draft saved.",
-      redirectTo: `/expenses/${expense.id}`,
+      data: { id: expense.id, reference: expense.reference, available: balance.available },
+      // Logging several at once stays on the page.
+      redirectTo: bool(fd, "stay") ? undefined : `/expenses/${expense.id}`,
     };
   } catch (e) {
     return toActionError(e);
