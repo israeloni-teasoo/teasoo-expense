@@ -402,6 +402,45 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
   await st.ctx.close();
 }
 
+// ---- Several expenses at once ----
+{
+  const st = await session("staff@teasoo.test", { width: 390, height: 844 });
+  const bp = st.page;
+  await bp.goto(BASE + "/expenses/new", { waitUntil: "networkidle" });
+  await bp.getByRole("tab", { name: "Several at once" }).click();
+  await bp.waitForURL(/mode=batch/, { timeout: 20000 });
+  const rowsL = bp.getByTestId("batch-row");
+  ok((await rowsL.count()) === 2, "batch mode starts with two expense rows");
+  const fundValue = await rowsL.nth(0).getByLabel("Fund for expense 1").locator("option", { hasText: "Staff Training Logistics" }).getAttribute("value");
+  const fill = async (i, { amount, description, category, other }) => {
+    const row = rowsL.nth(i);
+    await row.getByLabel(`Fund for expense ${i + 1}`).selectOption(fundValue);
+    await row.getByLabel(`Amount of expense ${i + 1}`).fill(amount);
+    await row.getByLabel(`Description of expense ${i + 1}`).fill(description);
+    await row.getByLabel(`Category of expense ${i + 1}`).selectOption({ label: category });
+    if (other) await row.getByLabel(`Typed category of expense ${i + 1}`).fill(other);
+  };
+  await fill(0, { amount: "4,000", description: "Taxi to the venue", category: "Transportation" });
+  await fill(1, { amount: "2,500", description: "Bottled water for volunteers", category: "Meals" });
+  await bp.getByRole("button", { name: "Add another expense" }).click();
+  ok((await rowsL.count()) === 3, "another row can be added without leaving the page");
+  await fill(2, { amount: "1,200", description: "Thank-you card for the host", category: "Others (not listed)" });
+  await rowsL.nth(0).getByTestId("batch-receipt").setInputFiles(png);
+  ok((await bp.getByTestId("batch-total").textContent()).includes("7,700"), "running total adds up all the rows");
+  await bp.getByRole("button", { name: /Submit all/ }).click();
+  ok(await bp.getByText("Type the category for this expense.").isVisible(), "a row with a problem is flagged before anything is saved");
+  await rowsL.nth(2).getByLabel("Typed category of expense 3").fill("Gifts");
+  await bp.getByRole("button", { name: /Submit all/ }).click();
+  await bp.getByTestId("batch-done").waitFor({ timeout: 60000 });
+  ok(await bp.getByText(/3 expenses saved · 3 submitted for review/).isVisible(), "all three expenses were submitted in one go");
+  await bp.goto(BASE + "/expenses", { waitUntil: "networkidle" });
+  ok(
+    (await bp.getByText("Taxi to the venue").count()) > 0 && (await bp.getByText("Thank-you card for the host").count()) > 0,
+    "the batch expenses appear in the expense list",
+  );
+  await st.ctx.close();
+}
+
 // ---- Multiple organisations ----
 {
   const adm = await session("admin@teasoo.test");
@@ -457,6 +496,7 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
   // Israel works in both; a link to a subsidiary record switches organisation automatically.
   const isr = await session("staff@teasoo.test");
   await isr.page.goto(logisticsAllocationUrl, { waitUntil: "networkidle" });
+  await isr.page.getByText("Warehouse inspection trip").first().waitFor({ timeout: 20000 }).catch(() => {});
   ok(
     (await isr.page.getByText("Warehouse inspection trip").first().isVisible()) && /\/allocations\//.test(isr.page.url()),
     "opening a record from another organisation switches to it",
