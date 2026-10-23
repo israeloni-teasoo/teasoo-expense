@@ -91,9 +91,9 @@ async function main() {
   const people = await db
     .insert(s.users)
     .values([
-      { organisationId: O, firstName: "Tolu", lastName: "Adeyemi", email: "admin@teasoo.test", role: "ADMIN", departmentId: dept("Administration"), jobTitle: "Operations Director", passwordHash },
+      { organisationId: O, firstName: "Tolu", lastName: "Adeyemi", email: "admin@teasoo.test", role: "ADMIN", departmentId: dept("Administration"), jobTitle: "Managing Partner", passwordHash },
       { organisationId: O, firstName: "Ngozi", lastName: "Okafor", email: "accountant@teasoo.test", role: "ACCOUNTANT", departmentId: dept("Finance"), jobTitle: "Accountant", passwordHash },
-      { organisationId: O, firstName: "Femi", lastName: "Balogun", email: "management@teasoo.test", role: "MANAGEMENT", departmentId: dept("Administration"), jobTitle: "Managing Director", passwordHash },
+      { organisationId: O, firstName: "Femi", lastName: "Balogun", email: "management@teasoo.test", role: "MANAGEMENT", departmentId: dept("Administration"), jobTitle: "Chief Operating Officer", passwordHash },
       { organisationId: O, firstName: "Israel", lastName: "Oni", email: "staff@teasoo.test", role: "STAFF", departmentId: dept("Operations"), jobTitle: "Operations Officer", passwordHash },
       { organisationId: O, firstName: "John", lastName: "Doe", email: "john@teasoo.test", role: "STAFF", departmentId: dept("Operations"), jobTitle: "Logistics Officer", passwordHash },
       { organisationId: O, firstName: "Jane", lastName: "Doe", email: "jane@teasoo.test", role: "STAFF", departmentId: dept("Marketing"), jobTitle: "Events Lead", passwordHash },
@@ -399,6 +399,101 @@ async function main() {
     received: -5,
     project: "Operations",
     expenses: [{ offset: -5, cat: "Utilities", desc: "Generator repair and diesel top-up", vendor: "Mikano", amount: N(42_000), status: "SUBMITTED", method: "Cash" }],
+  });
+
+  // Requisitions: Femi (COO) approves, Tolu (Managing Partner) pays.
+  const management = u("management@teasoo.test");
+  await db
+    .update(s.organisations)
+    .set({ settings: { ...s.DEFAULT_ORG_SETTINGS, requisitionApproverId: management.id, requisitionExecutorId: admin.id } })
+    .where(sql`${s.organisations.id} = ${O}`);
+  const [cages, printers] = await db
+    .insert(s.vendors)
+    .values([
+      { organisationId: O, name: "Eguagie Wisdom Farms", accountName: "EGUAGIE UGIAGBE WISDOM", accountNumber: "0017025060", bankName: "Fidelity Bank", createdBy: accountant.id },
+      { organisationId: O, name: "Copy Express", accountName: "COPY EXPRESS LTD", accountNumber: "1012345678", bankName: "GTBank", phone: "08031234567", createdBy: accountant.id },
+    ])
+    .returning();
+  const reqCounter = { n: 0 };
+  async function requisition(opts: {
+    staff: s.User;
+    title: string;
+    received: number;
+    items: { name: string; cat: string; desc?: string; vendor?: s.Vendor; qty: number; rate: number }[];
+    status: "AWAITING_APPROVAL" | "APPROVED" | "PROCESSED";
+  }) {
+    reqCounter.n++;
+    const total = opts.items.reduce((t, i) => t + i.qty * i.rate, 0);
+    const submittedAt = at(opts.received, 10);
+    const [r] = await db
+      .insert(s.requisitions)
+      .values({
+        organisationId: O,
+        reference: ref("PR", day(opts.received)),
+        requesterId: opts.staff.id,
+        departmentId: opts.staff.departmentId,
+        title: opts.title,
+        expectedDate: day(opts.received + 5),
+        deliveryAddress: "Head Office, Benin City, Edo",
+        total,
+        status: opts.status,
+        submittedAt,
+        currentApproverId: opts.status === "AWAITING_APPROVAL" ? management.id : opts.status === "APPROVED" ? admin.id : null,
+        approvedAt: opts.status !== "AWAITING_APPROVAL" ? at(opts.received + 1, 9) : null,
+        approvedBy: opts.status !== "AWAITING_APPROVAL" ? management.id : null,
+        processedAt: opts.status === "PROCESSED" ? at(opts.received + 2, 11) : null,
+        processedBy: opts.status === "PROCESSED" ? admin.id : null,
+        paymentDate: opts.status === "PROCESSED" ? day(opts.received + 2) : null,
+        paymentMethod: opts.status === "PROCESSED" ? "Bank transfer" : null,
+        paymentReference: opts.status === "PROCESSED" ? `TRF${700000 + reqCounter.n}` : null,
+        createdAt: submittedAt,
+      })
+      .returning();
+    await db.insert(s.requisitionItems).values(
+      opts.items.map((i, position) => ({
+        requisitionId: r.id,
+        position,
+        itemName: i.name,
+        categoryId: cat(i.cat),
+        description: i.desc ?? null,
+        vendorId: i.vendor?.id ?? null,
+        quantity: i.qty * 100,
+        rate: i.rate,
+        amount: i.qty * i.rate,
+      })),
+    );
+    const events: (typeof s.requisitionEvents.$inferInsert)[] = [
+      { requisitionId: r.id, actorId: opts.staff.id, type: "CREATED", createdAt: new Date(submittedAt.getTime() - 60_000) },
+      { requisitionId: r.id, actorId: opts.staff.id, type: "SUBMITTED", targetUserId: management.id, createdAt: submittedAt },
+    ];
+    if (opts.status !== "AWAITING_APPROVAL") events.push({ requisitionId: r.id, actorId: management.id, type: "APPROVED", targetUserId: admin.id, createdAt: at(opts.received + 1, 9) });
+    if (opts.status === "PROCESSED") events.push({ requisitionId: r.id, actorId: admin.id, type: "PROCESSED", createdAt: at(opts.received + 2, 11) });
+    await db.insert(s.requisitionEvents).values(events);
+    return r;
+  }
+  await requisition({
+    staff: israel,
+    title: "Bird cages for the T4L nursery",
+    received: -1,
+    status: "AWAITING_APPROVAL",
+    items: [{ name: "Bird cage", cat: "Equipment", desc: "96-capacity automatic bird cage", vendor: cages, qty: 1, rate: N(150_000) }],
+  });
+  await requisition({
+    staff: u("jane@teasoo.test"),
+    title: "Conference banners and flyers",
+    received: -4,
+    status: "APPROVED",
+    items: [
+      { name: "Roll-up banners", cat: "Printing", vendor: printers, qty: 4, rate: N(35_000) },
+      { name: "A5 flyers (pack of 500)", cat: "Printing", vendor: printers, qty: 2, rate: N(28_000) },
+    ],
+  });
+  await requisition({
+    staff: john,
+    title: "Generator servicing",
+    received: -12,
+    status: "PROCESSED",
+    items: [{ name: "Full service and oil change", cat: "Repairs", qty: 1, rate: N(65_000) }],
   });
 
   // A subsidiary with its own people and funds. Tolu (admin), Ngozi (accountant) and Israel (staff)

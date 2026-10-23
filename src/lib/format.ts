@@ -1,4 +1,4 @@
-import type { AllocationStatus, ClaimStatus, ExpenseStatus } from "@/db/schema";
+import type { AllocationStatus, ClaimStatus, ExpenseStatus, RequisitionStatus } from "@/db/schema";
 
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -34,6 +34,16 @@ export const CLAIM_STATUS: Record<ClaimStatus, { label: string; tone: Tone }> = 
   CANCELLED: { label: "Cancelled", tone: "gray" },
 };
 
+export const REQUISITION_STATUS: Record<RequisitionStatus, { label: string; tone: Tone }> = {
+  DRAFT: { label: "Draft", tone: "gray" },
+  AWAITING_APPROVAL: { label: "Awaiting approval", tone: "amber" },
+  ON_HOLD: { label: "More info needed", tone: "orange" },
+  APPROVED: { label: "Approved · awaiting payment", tone: "blue" },
+  REJECTED: { label: "Declined", tone: "red" },
+  PROCESSED: { label: "Paid", tone: "green" },
+  CANCELLED: { label: "Cancelled", tone: "gray" },
+};
+
 export const PAYMENT_METHODS = ["Bank transfer", "Cash", "Debit card", "Credit card", "POS", "Mobile money", "Cheque", "Other"];
 
 export const ADJUSTMENT_LABELS = {
@@ -50,6 +60,8 @@ export const DOCUMENT_KIND_LABELS = {
   RETURN_EVIDENCE: "Return evidence",
   AUTHORIZATION: "Authorization evidence",
   SCREENSHOT: "Screenshot",
+  QUOTE: "Quote / invoice",
+  PAYMENT_PROOF: "Proof of payment",
 } as const;
 
 export function initials(first: string, last?: string) {

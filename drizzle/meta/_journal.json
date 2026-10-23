@@ -29,6 +29,13 @@
       "when": 1791822807289,
       "tag": "0003_organisations_memberships_others",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792757108320,
+      "tag": "0004_requisitions",
+      "breakpoints": true
     }
   ]
 }

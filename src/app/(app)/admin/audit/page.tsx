@@ -15,7 +15,7 @@ import { formatDateTime } from "@/lib/dates";
 
 export const metadata: Metadata = { title: "Audit log" };
 
-const ENTITY_TYPES = ["ALLOCATION", "EXPENSE", "DOCUMENT", "RETURN", "CLAIM", "RECONCILIATION", "USER", "CATEGORY", "DEPARTMENT", "PROJECT", "SETTINGS", "AUTH", "EXPORT", "FEEDBACK", "ORGANISATION"];
+const ENTITY_TYPES = ["ALLOCATION", "EXPENSE", "DOCUMENT", "RETURN", "CLAIM", "RECONCILIATION", "USER", "CATEGORY", "DEPARTMENT", "PROJECT", "SETTINGS", "AUTH", "EXPORT", "FEEDBACK", "ORGANISATION", "REQUISITION", "VENDOR"];
 const PAGE = 50;
 
 export default async function AuditPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {

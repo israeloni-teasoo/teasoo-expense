@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import type { Executor } from "@/db";
 
 /** Generates sequential references such as AL-2026-00124 atomically. */
-export async function nextReference(exec: Executor, prefix: "AL" | "EXP" | "CLM", year = new Date().getFullYear()) {
+export async function nextReference(exec: Executor, prefix: "AL" | "EXP" | "CLM" | "PR", year = new Date().getFullYear()) {
   const key = `${prefix}-${year}`;
   const result = await exec.execute<{ value: number }>(sql`
     INSERT INTO counters (key, value) VALUES (${key}, 1)

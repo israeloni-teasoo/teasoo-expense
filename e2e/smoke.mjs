@@ -428,7 +428,8 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
   await rowsL.nth(0).getByTestId("batch-receipt").setInputFiles(png);
   ok((await bp.getByTestId("batch-total").textContent()).includes("7,700"), "running total adds up all the rows");
   await bp.getByRole("button", { name: /Submit all/ }).click();
-  ok(await bp.getByText("Type the category for this expense.").isVisible(), "a row with a problem is flagged before anything is saved");
+  await bp.getByText("Type the category for this expense.").first().waitFor({ timeout: 15000 }).catch(() => {});
+  ok(await bp.getByText("Type the category for this expense.").first().isVisible(), "a row with a problem is flagged before anything is saved");
   await rowsL.nth(2).getByLabel("Typed category of expense 3").fill("Gifts");
   await bp.getByRole("button", { name: /Submit all/ }).click();
   await bp.getByTestId("batch-done").waitFor({ timeout: 60000 });
@@ -439,6 +440,110 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
     "the batch expenses appear in the expense list",
   );
   await st.ctx.close();
+}
+
+// ---- Requisitions: staff → COO → Managing Partner ----
+{
+  const st = await session("staff@teasoo.test");
+  let rp = st.page;
+  await rp.goto(BASE + "/requisitions/new", { waitUntil: "networkidle" });
+  await rp.fill("#title", "Projector for the training room");
+  const items = rp.getByTestId("req-item");
+  await rp.getByLabel("Item 1 name").fill("HD projector");
+  await rp.getByLabel("Item 1 category").selectOption({ label: "Equipment" });
+  await rp.getByLabel("Item 1 vendor").selectOption("__new__");
+  await rp.fill("#vendor-name", "Slot Systems Ltd");
+  await rp.fill("#accountName", "SLOT SYSTEMS LTD");
+  await rp.fill("#accountNumber", "0123456789");
+  await rp.fill("#bankName", "Zenith Bank");
+  await rp.getByRole("button", { name: "Add vendor" }).click();
+  await rp.getByText("Pay to SLOT SYSTEMS LTD").waitFor({ timeout: 15000 });
+  ok(true, "staff added a new vendor with bank details without leaving the form");
+  await rp.getByLabel("Item 1 quantity").fill("2");
+  await rp.getByLabel("Item 1 price").fill("150,000");
+  await rp.getByLabel("Item 1 discount").fill("10,000");
+  await rp.getByRole("button", { name: "Add another item" }).click();
+  await rp.getByLabel("Item 2 name").fill("HDMI cables");
+  await rp.getByLabel("Item 2 category").selectOption({ label: "Others (not listed)" });
+  await rp.getByLabel("Item 2 typed category").fill("Accessories");
+  await rp.getByLabel("Item 2 quantity").fill("3");
+  await rp.getByLabel("Item 2 price").fill("5,000");
+  ok((await items.count()) === 2 && (await rp.getByTestId("req-total").textContent()).includes("305,000"), "requisition total is quantity × price − discount across items");
+  await rp.getByRole("button", { name: "Submit for approval" }).click();
+  await rp.waitForURL(/\/requisitions\/[0-9a-f-]{36}$/, { timeout: 20000 });
+  const reqUrl = rp.url();
+  ok(
+    (await rp.getByText("Awaiting approval").first().isVisible()) && (await rp.getByTestId("req-history").getByText(/submitted it\s*to Femi Balogun/).isVisible()),
+    "submitted requisition goes to the COO",
+  );
+
+  // COO asks for more information
+  const coo = await session("management@teasoo.test");
+  await coo.page.goto(BASE + "/requisitions", { waitUntil: "networkidle" });
+  ok(await coo.page.getByText("Projector for the training room").first().isVisible(), "the COO sees it under 'Waiting for me'");
+  await coo.page.goto(reqUrl, { waitUntil: "networkidle" });
+  await coo.page.getByRole("button", { name: "Ask for more info" }).first().click();
+  await coo.page.fill("#comment-HOLD", "Please attach the quote from the vendor.");
+  await coo.page.getByRole("button", { name: "Ask for more info" }).last().click();
+  await coo.page.getByText("More info needed").first().waitFor({ timeout: 15000 });
+  ok(true, "the COO sent it back asking for more information");
+
+  // Staff updates and resubmits
+  await rp.goto(reqUrl, { waitUntil: "networkidle" });
+  ok(await rp.getByText("Please attach the quote from the vendor.").first().isVisible(), "staff sees what the COO asked for");
+  await rp.getByRole("link", { name: /Update & resubmit/ }).click();
+  await rp.waitForURL(/\/edit$/, { timeout: 20000 });
+  await rp.getByTestId("req-quotes").setInputFiles(png);
+  await rp.fill("#comment", "Quote attached.");
+  await rp.getByRole("button", { name: "Resubmit" }).click();
+  await rp.waitForURL(/\/requisitions\/[0-9a-f-]{36}$/, { timeout: 20000 });
+  ok(await rp.getByText("Awaiting approval").first().isVisible(), "resubmitted requisition is back with the COO");
+
+  // COO approves
+  await coo.page.goto(reqUrl, { waitUntil: "networkidle" });
+  await coo.page.getByRole("button", { name: "Approve" }).first().click();
+  await coo.page.getByRole("button", { name: "Approve" }).last().click();
+  await coo.page.getByText("Approved · awaiting payment").first().waitFor({ timeout: 15000 });
+  ok(true, "the COO approved it");
+  await coo.ctx.close();
+
+  // Managing Partner records the payment
+  const mp = await session("admin@teasoo.test");
+  await mp.page.goto(reqUrl, { waitUntil: "networkidle" });
+  ok(await mp.page.getByText("Ready to pay").isVisible(), "the Managing Partner is asked to pay it");
+  await mp.page.fill("#paymentReference", "TRF-PROJ-001");
+  await mp.page.getByRole("button", { name: /Record payment of ₦305,000/ }).click();
+  await mp.page.getByTestId("req-payment").waitFor({ timeout: 15000 });
+  ok(await mp.page.getByText(/ref TRF-PROJ-001/).isVisible(), "payment recorded with its reference");
+
+  // The seeded approved requisition is paid to the requester as an allocation.
+  await mp.page.goto(BASE + "/requisitions?view=pending", { waitUntil: "networkidle" });
+  await mp.page.locator("tr", { hasText: "Conference banners and flyers" }).getByRole("link").click();
+  await mp.page.waitForURL(/\/requisitions\/[0-9a-f-]{36}$/, { timeout: 20000 });
+  await mp.page.getByText(/Jane Doe/).first().waitFor();
+  await mp.page.locator('input[name="payTo"][value="REQUESTER"]').check();
+  await mp.page.getByRole("button", { name: /Record payment/ }).click();
+  await mp.page.getByText(/log expenses against it/).waitFor({ timeout: 15000 });
+  ok(true, "paying the requester creates an allocation for them");
+
+  const exp = await mp.page.request.get(BASE + "/api/exports?report=requisitions&view=all&status=all&format=xlsx");
+  ok(exp.status() === 200, "requisitions export to Excel");
+  await mp.ctx.close();
+
+  await rp.goto(reqUrl, { waitUntil: "networkidle" });
+  ok(await rp.getByText("Paid", { exact: true }).first().isVisible(), "staff sees their requisition was paid");
+  await st.ctx.close();
+
+  // The COO's own requisition goes to the Managing Partner.
+  const coo2 = await session("management@teasoo.test");
+  await coo2.page.goto(BASE + "/requisitions/new", { waitUntil: "networkidle" });
+  ok(await coo2.page.getByText(/Goes to Tolu Adeyemi/).isVisible(), "the COO's own requisition goes to the Managing Partner");
+  await coo2.ctx.close();
+
+  const acc = await session("accountant@teasoo.test");
+  await acc.page.goto(BASE + "/admin/vendors", { waitUntil: "networkidle" });
+  ok(await acc.page.getByText("Slot Systems Ltd", { exact: true }).isVisible(), "finance sees the vendor list");
+  await acc.ctx.close();
 }
 
 // ---- Multiple organisations ----

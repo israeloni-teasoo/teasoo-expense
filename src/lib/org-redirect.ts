@@ -2,7 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { db } from "@/db";
-import { allocations, expenses } from "@/db/schema";
+import { allocations, expenses, requisitions } from "@/db/schema";
 import { redirectToOwningOrganisation, type CurrentUser } from "@/lib/auth/current";
 
 /**
@@ -10,10 +10,12 @@ import { redirectToOwningOrganisation, type CurrentUser } from "@/lib/auth/curre
  * organisation the person works in (e.g. a link from an email), switch there and reopen the page;
  * otherwise show "not found".
  */
-export async function notFoundOrSwitch(user: CurrentUser, kind: "allocation" | "expense", id: string, path: string): Promise<never> {
+export async function notFoundOrSwitch(user: CurrentUser, kind: "allocation" | "expense" | "requisition", id: string, path: string): Promise<never> {
   if (/^[0-9a-f-]{36}$/i.test(id)) {
     const orgId =
-      kind === "allocation"
+      kind === "requisition"
+        ? (await db.select({ org: requisitions.organisationId }).from(requisitions).where(eq(requisitions.id, id)).limit(1))[0]?.org
+        : kind === "allocation"
         ? (await db.select({ org: allocations.organisationId }).from(allocations).where(eq(allocations.id, id)).limit(1))[0]?.org
         : (
             await db

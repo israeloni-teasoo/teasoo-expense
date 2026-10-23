@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { SettingsForm } from "@/components/forms/admin-forms";
 import { OrganisationForm } from "@/components/forms/organisation-forms";
+import { RequisitionApproversForm } from "@/components/forms/requisition-forms";
+import { ROLE_LABELS } from "@/lib/rbac";
 import { DiagnosticsButtons } from "@/components/forms/diagnostics";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -10,13 +12,14 @@ import { requirePagePermission } from "@/lib/auth/current";
 import { redirectUriFor } from "@/lib/auth/google";
 import { config, emailEnabled, emailFromWarning, googleEnabled } from "@/lib/config";
 import { storageDriverName } from "@/lib/storage";
-import { getOrg } from "@/lib/services/org";
+import { getLookups, getOrg } from "@/lib/services/org";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   const user = await requirePagePermission("admin.config");
-  const org = await getOrg(user.organisationId);
+  const [org, lookups] = await Promise.all([getOrg(user.organisationId), getLookups(user.organisationId)]);
+  const members = lookups.users.filter((u) => u.status === "ACTIVE").map((u) => ({ id: u.id, name: u.fullName, role: ROLE_LABELS[u.role] }));
   const h = await headers();
   const host = h.get("x-forwarded-host")?.split(",")[0].trim() || h.get("host") || "localhost:3000";
   const proto = h.get("x-forwarded-proto")?.split(",")[0].trim() || (host.startsWith("localhost") ? "http" : "https");
@@ -37,6 +40,20 @@ export default async function SettingsPage() {
       <Card>
         <CardBody>
           <SettingsForm name={org.name} settings={org.settings} />
+        </CardBody>
+      </Card>
+      <Card id="requisitions" className="scroll-mt-24">
+        <CardHeader title="Requisitions" description="Who approves purchase requests, and who pays them once approved" />
+        <CardBody>
+          <RequisitionApproversForm
+            members={members}
+            values={{
+              approverId: org.settings.requisitionApproverId,
+              approverBackupId: org.settings.requisitionApproverBackupId,
+              executorId: org.settings.requisitionExecutorId,
+              executorBackupId: org.settings.requisitionExecutorBackupId,
+            }}
+          />
         </CardBody>
       </Card>
       <Card>

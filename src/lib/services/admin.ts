@@ -496,7 +496,8 @@ export async function saveSettings(actor: CurrentUser, input: { name: string; se
   if (!(s.unusualMultiplier >= 1.5 && s.unusualMultiplier <= 20)) e.unusualMultiplier = "Between 1.5 and 20.";
   if (Object.keys(e).length) throw new DomainError("Please correct the highlighted fields.", "VALIDATION", e);
   const current = await getOrg(actor.organisationId);
-  const next = { ...DEFAULT_ORG_SETTINGS, ...s };
+  // Keep settings managed elsewhere (e.g. requisition approvers).
+  const next = { ...DEFAULT_ORG_SETTINGS, ...current.settings, ...s };
   await db.transaction(async (tx) => {
     await tx.update(organisations).set({ name: input.name.trim(), settings: next }).where(eq(organisations.id, actor.organisationId));
     const d = diff({ name: current.name, ...current.settings } as Record<string, unknown>, { name: input.name.trim(), ...next });

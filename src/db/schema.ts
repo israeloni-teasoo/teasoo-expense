@@ -72,6 +72,29 @@ export const documentKindEnum = pgEnum("document_kind", [
   "RETURN_EVIDENCE",
   "AUTHORIZATION",
   "SCREENSHOT",
+  "QUOTE",
+  "PAYMENT_PROOF",
+]);
+export const requisitionStatusEnum = pgEnum("requisition_status", [
+  "DRAFT",
+  "AWAITING_APPROVAL",
+  "ON_HOLD",
+  "APPROVED",
+  "REJECTED",
+  "PROCESSED",
+  "CANCELLED",
+]);
+export const requisitionEventEnum = pgEnum("requisition_event", [
+  "CREATED",
+  "SUBMITTED",
+  "RECALLED",
+  "RESUBMITTED",
+  "APPROVED",
+  "REJECTED",
+  "INFO_REQUESTED",
+  "PROCESSED",
+  "CANCELLED",
+  "COMMENT",
 ]);
 export const feedbackCategoryEnum = pgEnum("feedback_category", ["BUG", "IDEA", "QUESTION", "OTHER"]);
 export const feedbackStatusEnum = pgEnum("feedback_status", ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]);
@@ -95,6 +118,8 @@ export type ClaimType = (typeof claimTypeEnum.enumValues)[number];
 export type ClaimStatus = (typeof claimStatusEnum.enumValues)[number];
 export type FeedbackCategory = (typeof feedbackCategoryEnum.enumValues)[number];
 export type FeedbackStatus = (typeof feedbackStatusEnum.enumValues)[number];
+export type RequisitionStatus = (typeof requisitionStatusEnum.enumValues)[number];
+export type RequisitionEventType = (typeof requisitionEventEnum.enumValues)[number];
 
 export type OrgSettings = {
   /** Block expenses that exceed the available balance instead of flagging them as over budget. */
@@ -111,6 +136,12 @@ export type OrgSettings = {
   nearDepletionPercent: number;
   /** Expenses this many times above the 90-day category average are flagged as unusual. */
   unusualMultiplier: number;
+  /** Requisitions: first approver (e.g. the COO) and an optional backup. */
+  requisitionApproverId?: string | null;
+  requisitionApproverBackupId?: string | null;
+  /** Requisitions: who executes/pays approved requests (e.g. the Managing Partner) and an optional backup. */
+  requisitionExecutorId?: string | null;
+  requisitionExecutorBackupId?: string | null;
 };
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
@@ -396,6 +427,122 @@ export const feedback = pgTable(
   (t) => [index("feedback_status_idx").on(t.organisationId, t.status)],
 );
 
+/** Suppliers that requisitions pay, with their bank details. */
+export const vendors = pgTable(
+  "vendors",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    name: text("name").notNull(),
+    accountName: text("account_name"),
+    accountNumber: text("account_number"),
+    bankName: text("bank_name"),
+    email: text("email"),
+    phone: text("phone"),
+    notes: text("notes"),
+    archived: boolean("archived").notNull().default(false),
+    createdBy: uuid("created_by").references(() => users.id),
+    ...timestamps,
+  },
+  (t) => [index("vendors_org_idx").on(t.organisationId)],
+);
+
+/**
+ * A purchase request ("requisition"): staff ask for money to be paid out, the approver (COO)
+ * approves, declines or asks for more information, then the executor (Managing Partner) pays.
+ */
+export const requisitions = pgTable(
+  "requisitions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organisationId: uuid("organisation_id")
+      .notNull()
+      .references(() => organisations.id),
+    reference: text("reference").notNull().unique(),
+    requesterId: uuid("requester_id")
+      .notNull()
+      .references(() => users.id),
+    departmentId: uuid("department_id").references(() => departments.id),
+    projectId: uuid("project_id").references(() => projects.id),
+    /** Why the money is needed. */
+    title: text("title").notNull(),
+    expectedDate: date("expected_date").notNull(),
+    deliveryAddress: text("delivery_address"),
+    /** The requester's own reference (e.g. a quote or invoice number). */
+    externalReference: text("external_reference"),
+    notesToApprover: text("notes_to_approver"),
+    total: money("total").notNull().default(0),
+    status: requisitionStatusEnum("status").notNull().default("DRAFT"),
+    /** Who must act next (approver while awaiting approval, executor once approved). */
+    currentApproverId: uuid("current_approver_id").references(() => users.id),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionReason: text("decision_reason"),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    processedBy: uuid("processed_by").references(() => users.id),
+    paymentDate: date("payment_date"),
+    paymentMethod: text("payment_method"),
+    paymentReference: text("payment_reference"),
+    paymentNotes: text("payment_notes"),
+    /** Set when the money was given to the requester as an allocation to account for. */
+    allocationId: uuid("allocation_id").references(() => allocations.id),
+    ...timestamps,
+  },
+  (t) => [
+    index("requisitions_org_status_idx").on(t.organisationId, t.status),
+    index("requisitions_requester_idx").on(t.requesterId),
+    index("requisitions_approver_idx").on(t.currentApproverId),
+  ],
+);
+
+export const requisitionItems = pgTable(
+  "requisition_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requisitionId: uuid("requisition_id")
+      .notNull()
+      .references(() => requisitions.id, { onDelete: "cascade" }),
+    position: integer("position").notNull().default(0),
+    itemName: text("item_name").notNull(),
+    categoryId: uuid("category_id").references(() => expenseCategories.id),
+    categoryOther: text("category_other"),
+    description: text("description"),
+    vendorId: uuid("vendor_id").references(() => vendors.id),
+    /** Quantity in hundredths (1.5 → 150), so it stays exact. */
+    quantity: integer("quantity").notNull().default(100),
+    /** Unit price in kobo. */
+    rate: money("rate").notNull(),
+    /** Discount in kobo for the whole line. */
+    discount: money("discount").notNull().default(0),
+    amount: money("amount").notNull(),
+  },
+  (t) => [index("requisition_items_req_idx").on(t.requisitionId)],
+);
+
+/** Approval history: every submission, decision, recall and comment. */
+export const requisitionEvents = pgTable(
+  "requisition_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requisitionId: uuid("requisition_id")
+      .notNull()
+      .references(() => requisitions.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => users.id),
+    type: requisitionEventEnum("type").notNull(),
+    comment: text("comment"),
+    /** Who it was sent to, for "submitted to …" lines. */
+    targetUserId: uuid("target_user_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("requisition_events_req_idx").on(t.requisitionId)],
+);
+
 export const documents = pgTable(
   "documents",
   {
@@ -409,6 +556,7 @@ export const documents = pgTable(
     fundReturnId: uuid("fund_return_id").references(() => fundReturns.id),
     claimId: uuid("claim_id").references(() => claims.id),
     feedbackId: uuid("feedback_id").references(() => feedback.id),
+    requisitionId: uuid("requisition_id").references(() => requisitions.id),
     fileName: text("file_name").notNull(),
     fileType: text("file_type").notNull(),
     fileSize: integer("file_size").notNull(),
@@ -521,3 +669,6 @@ export type Department = typeof departments.$inferSelect;
 export type Feedback = typeof feedback.$inferSelect;
 export type Organisation = typeof organisations.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
+export type Vendor = typeof vendors.$inferSelect;
+export type Requisition = typeof requisitions.$inferSelect;
+export type RequisitionItem = typeof requisitionItems.$inferSelect;
