@@ -21,6 +21,9 @@ import { can } from "@/lib/rbac";
 import { getAllocationDetail, listAllocations } from "@/lib/services/allocations";
 import { personalSpendOwed } from "@/lib/balance";
 import { getLookups } from "@/lib/services/org";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { requisitions } from "@/db/schema";
 
 export const metadata: Metadata = { title: "Allocation" };
 
@@ -46,6 +49,8 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
   const active = a.status === "ACTIVE";
   const personal = a.kind === "REIMBURSEMENT";
   const finance = can(user.role, "allocations.viewAll");
+  // Requisitions paid into this allocation (as its initial funding or a top-up).
+  const fundedBy = await db.select({ id: requisitions.id, reference: requisitions.reference }).from(requisitions).where(eq(requisitions.allocationId, a.id));
   const lookups = can(user.role, "allocations.create") ? await getLookups(user.organisationId) : null;
   const owed = personal ? personalSpendOwed(b) : 0;
   // Funds the staff member holds that a personal-spend settlement can be offset against.
@@ -77,6 +82,11 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
             <span>{a.reference}</span>
             <span className="text-gray-300">·</span>
             {personal ? <Badge tone="purple">Personal spend</Badge> : <AllocationStatusBadge status={a.status} overdue={d.overdue} overBudget={b.overBudget} />}
+            {fundedBy.map((q) => (
+              <Link key={q.id} href={`/requisitions/${q.id}`} className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-200 hover:bg-blue-100">
+                From {q.reference}
+              </Link>
+            ))}
           </span>
         }
         actions={
@@ -396,6 +406,19 @@ export default async function AllocationDetailPage({ params, searchParams }: { p
                   { label: "Project", value: d.project?.name },
                   { label: "Transfer reference", value: a.transferReference, hidden: !a.transferReference },
                   { label: "Funding source", value: a.fundingSource, hidden: !a.fundingSource },
+                  {
+                    label: "From requisition",
+                    hidden: !fundedBy.length,
+                    value: (
+                      <span className="flex flex-wrap gap-x-2">
+                        {fundedBy.map((q) => (
+                          <Link key={q.id} href={`/requisitions/${q.id}`} className="font-medium text-brand-700 hover:underline">
+                            {q.reference}
+                          </Link>
+                        ))}
+                      </span>
+                    ),
+                  },
                   { label: "Approving officer", value: a.approvingOfficer, hidden: !a.approvingOfficer },
                   { label: "Notes", value: a.notes, hidden: !a.notes },
                   { label: "Created by", value: d.createdBy },

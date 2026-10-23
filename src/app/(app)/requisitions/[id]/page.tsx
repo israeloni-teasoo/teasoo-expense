@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Ban, CheckCircle2, CircleDot, FileText, HelpCircle, MessageSquare, Pencil, RotateCcw, Send, Wallet, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, CircleDot, FileDown, FileText, HelpCircle, MessageSquare, Pencil, RotateCcw, Send, Wallet, XCircle } from "lucide-react";
 import { ProcessRequisitionForm, RequisitionCommentForm, RequisitionStep } from "@/components/forms/requisition-forms";
 import { DocumentGrid } from "@/components/domain/documents";
 import { RequisitionStatusBadge } from "@/components/ui/badge";
-import { LinkButton } from "@/components/ui/button";
+import { buttonClasses, LinkButton } from "@/components/ui/button";
+import { DownloadLink } from "@/components/ui/download-link";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Alert, PageHeader } from "@/components/ui/misc";
 import { PrintButton } from "@/components/ui/print-button";
@@ -16,7 +17,7 @@ import { DomainError } from "@/lib/errors";
 import { formatMoney } from "@/lib/money";
 import { notFoundOrSwitch } from "@/lib/org-redirect";
 import { formatQuantity } from "@/lib/requisition-rules";
-import { getRequisition } from "@/lib/services/requisitions";
+import { getRequisition, paymentTargets } from "@/lib/services/requisitions";
 
 export const metadata: Metadata = { title: "Requisition" };
 
@@ -41,6 +42,7 @@ export default async function RequisitionPage({ params }: { params: Promise<{ id
     throw e;
   });
   const r = d.requisition;
+  const targets = d.can.process ? await paymentTargets(user) : null;
   const stage =
     r.status === "AWAITING_APPROVAL"
       ? `Waiting for ${d.names.approvers.join(" or ") || "an approver"} to approve`
@@ -63,7 +65,10 @@ export default async function RequisitionPage({ params }: { params: Promise<{ id
             )}
             {d.can.recall && <RequisitionStep id={r.id} step="recall" />}
             {d.can.cancel && <RequisitionStep id={r.id} step="cancel" />}
-            <PrintButton />
+            <DownloadLink href={`/api/requisitions/${r.id}/pdf`} fallbackName={`Purchase_Request_${r.reference}.pdf`} className={buttonClasses("secondary", "sm")}>
+              <FileDown className="h-4 w-4" /> Download PDF
+            </DownloadLink>
+            <PrintButton label="Print" />
           </div>
         }
       />
@@ -103,7 +108,7 @@ export default async function RequisitionPage({ params }: { params: Promise<{ id
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <ProcessRequisitionForm id={r.id} total={r.total} requesterName={d.requester?.name ?? "The requester"} today={todayISO()} />
+                    <ProcessRequisitionForm id={r.id} total={r.total} requesterId={r.requesterId} today={todayISO()} staff={targets!.staff} allocations={targets!.allocations} />
                     <div className="border-t border-gray-100 pt-3">
                       <RequisitionStep id={r.id} step="REJECT" />
                     </div>
@@ -245,10 +250,13 @@ export default async function RequisitionPage({ params }: { params: Promise<{ id
                   {r.paymentReference ? ` · ref ${r.paymentReference}` : ""}
                 </p>
                 {r.paymentNotes && <p className="mt-1 text-emerald-900">{r.paymentNotes}</p>}
-                {r.allocationId && (
+                {d.paidAllocation && (
                   <p className="mt-1 text-emerald-900">
-                    Sent to {d.requester?.name} as an allocation —{" "}
-                    <Link href={`/allocations/${r.allocationId}`} className="font-medium underline">log expenses against it</Link>.
+                    Paid to {d.paidAllocation.staffName} as part of allocation{" "}
+                    <Link href={`/allocations/${d.paidAllocation.id}`} className="font-medium underline">
+                      {d.paidAllocation.reference}
+                    </Link>{" "}
+                    — they record their expenses against it.
                   </p>
                 )}
               </div>

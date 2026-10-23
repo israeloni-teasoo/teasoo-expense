@@ -145,6 +145,10 @@ export async function saveSettingsAction(_: Prev, fd: FormData): Promise<ActionR
         maxUploadMb: Number(str(fd, "maxUploadMb")),
         nearDepletionPercent: Number(str(fd, "nearDepletionPercent")),
         unusualMultiplier: Number(str(fd, "unusualMultiplier")),
+        contactAddress: opt(fd, "contactAddress"),
+        contactEmail: opt(fd, "contactEmail"),
+        contactPhone: opt(fd, "contactPhone"),
+        website: opt(fd, "website"),
       },
     });
     revalidatePath("/", "layout");

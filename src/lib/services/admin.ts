@@ -494,7 +494,10 @@ export async function saveSettings(actor: CurrentUser, input: { name: string; se
   if (!(s.maxUploadMb >= 1 && s.maxUploadMb <= 25)) e.maxUploadMb = "Between 1 and 25 MB.";
   if (!(s.nearDepletionPercent >= 50 && s.nearDepletionPercent <= 100)) e.nearDepletionPercent = "Between 50 and 100.";
   if (!(s.unusualMultiplier >= 1.5 && s.unusualMultiplier <= 20)) e.unusualMultiplier = "Between 1.5 and 20.";
+  if (s.contactEmail && !EMAIL_RE.test(s.contactEmail.trim())) e.contactEmail = "Enter a valid email address.";
+  if (s.contactAddress && s.contactAddress.length > 300) e.contactAddress = "Keep it under 300 characters.";
   if (Object.keys(e).length) throw new DomainError("Please correct the highlighted fields.", "VALIDATION", e);
+  for (const k of ["contactAddress", "contactEmail", "contactPhone", "website"] as const) s[k] = s[k]?.trim() || null;
   const current = await getOrg(actor.organisationId);
   // Keep settings managed elsewhere (e.g. requisition approvers).
   const next = { ...DEFAULT_ORG_SETTINGS, ...current.settings, ...s };

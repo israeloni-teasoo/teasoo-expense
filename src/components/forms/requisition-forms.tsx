@@ -366,9 +366,27 @@ export function RequisitionStep({ id, step }: { id: string; step: keyof typeof S
   );
 }
 
-/** The person who pays records the payment (and optionally funds the requester instead). */
-export function ProcessRequisitionForm({ id, total, requesterName, today }: { id: string; total: number; requesterName: string; today: string }) {
-  const [payTo, setPayTo] = useState<"VENDOR" | "REQUESTER">("VENDOR");
+/** The person who pays records the payment: to the vendor(s), or to a staff member as (part of) an allocation. */
+export function ProcessRequisitionForm({
+  id,
+  total,
+  requesterId,
+  today,
+  staff,
+  allocations,
+}: {
+  id: string;
+  total: number;
+  requesterId: string;
+  today: string;
+  staff: { id: string; name: string }[];
+  allocations: { id: string; reference: string; purpose: string; staffId: string }[];
+}) {
+  const [payTo, setPayTo] = useState<"VENDOR" | "STAFF">("VENDOR");
+  const [staffId, setStaffId] = useState(staff.some((p) => p.id === requesterId) ? requesterId : (staff[0]?.id ?? ""));
+  const [target, setTarget] = useState("NEW");
+  const theirs = allocations.filter((a) => a.staffId === staffId);
+  const staffName = staff.find((p) => p.id === staffId)?.name ?? "the staff member";
   return (
     <ActionForm action={processRequisitionAction}>
       <input type="hidden" name="id" value={id} />
@@ -376,8 +394,8 @@ export function ProcessRequisitionForm({ id, total, requesterName, today }: { id
         <legend className="mb-1 text-sm font-medium text-gray-900">Who was paid?</legend>
         {(
           [
-            ["VENDOR", "The vendor(s) directly", "Pay the bank details on the items."],
-            ["REQUESTER", `${requesterName}`, `They receive ${formatMoney(total)} as an allocation and account for it with receipts.`],
+            ["VENDOR", "The vendor(s) directly", "Paid to the bank details on the items."],
+            ["STAFF", "A staff member", `They receive ${formatMoney(total)} as an allocation and record their expenses and receipts against it.`],
           ] as const
         ).map(([value, label, hint]) => (
           <label key={value} className={cn("flex cursor-pointer gap-3 rounded-lg border p-3 text-sm", payTo === value ? "border-brand-600 bg-brand-50" : "border-gray-200")}>
@@ -389,6 +407,38 @@ export function ProcessRequisitionForm({ id, total, requesterName, today }: { id
           </label>
         ))}
       </fieldset>
+      {payTo === "STAFF" && (
+        <div className="grid gap-4 rounded-lg bg-gray-50 p-3 sm:grid-cols-2">
+          <FormField name="staffId" label="Staff member" required>
+            <Select
+              id="staffId"
+              name="staffId"
+              value={staffId}
+              onChange={(e) => {
+                setStaffId(e.target.value);
+                setTarget("NEW");
+              }}
+            >
+              {staff.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.id === requesterId ? " (requester)" : ""}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+          <FormField name="allocationTarget" label="Allocation" hint={theirs.length ? `Or add it to one of ${staffName}'s open allocations.` : `${staffName} has no open allocation.`}>
+            <Select id="allocationTarget" name="allocationTarget" value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="NEW">Start a new allocation</option>
+              {theirs.map((a) => (
+                <option key={a.id} value={a.id}>
+                  Add to {a.reference} · {a.purpose}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField name="paymentDate" label="Payment date" required>
           <Input id="paymentDate" name="paymentDate" type="date" max={today} defaultValue={today} />

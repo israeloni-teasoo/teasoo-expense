@@ -411,6 +411,24 @@ export function SettingsForm({ name, settings }: { name: string; settings: OrgSe
         <Input id="name" name="name" defaultValue={name} />
       </FormField>
       <fieldset className="space-y-4">
+        <legend className="mb-1 text-sm font-semibold text-gray-900">Contact details</legend>
+        <p className="text-xs text-gray-500">Printed under your logo on purchase requests and other PDFs.</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField name="contactAddress" label="Address" className="sm:col-span-2">
+            <Textarea id="contactAddress" name="contactAddress" rows={2} defaultValue={settings.contactAddress ?? ""} placeholder={"Edo\nNigeria"} />
+          </FormField>
+          <FormField name="contactEmail" label="Email">
+            <Input id="contactEmail" name="contactEmail" type="email" defaultValue={settings.contactEmail ?? ""} placeholder="info@teasooconsulting.com" />
+          </FormField>
+          <FormField name="contactPhone" label="Phone">
+            <Input id="contactPhone" name="contactPhone" type="tel" defaultValue={settings.contactPhone ?? ""} />
+          </FormField>
+          <FormField name="website" label="Website" className="sm:col-span-2">
+            <Input id="website" name="website" defaultValue={settings.website ?? ""} placeholder="www.teasooconsulting.com" />
+          </FormField>
+        </div>
+      </fieldset>
+      <fieldset className="space-y-4">
         <legend className="mb-2 text-sm font-semibold text-gray-900">Expense validation rules</legend>
         <Checkbox
           name="requireReceipt"

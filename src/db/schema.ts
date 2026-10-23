@@ -144,6 +144,11 @@ export type OrgSettings = {
   requisitionExecutorBackupId?: string | null;
   /** Requisition reference prefix, e.g. "TC" → TC-PR-00100. Defaults to the organisation's initials. */
   requisitionPrefix?: string | null;
+  /** Shown under the logo on printed/PDF documents such as purchase requests. */
+  contactAddress?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  website?: string | null;
 };
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {

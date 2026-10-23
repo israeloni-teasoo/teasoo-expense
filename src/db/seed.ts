@@ -405,7 +405,7 @@ async function main() {
   const management = u("management@teasoo.test");
   await db
     .update(s.organisations)
-    .set({ settings: { ...s.DEFAULT_ORG_SETTINGS, requisitionApproverId: management.id, requisitionExecutorId: admin.id, requisitionPrefix: "TC" } })
+    .set({ settings: { ...s.DEFAULT_ORG_SETTINGS, requisitionApproverId: management.id, requisitionExecutorId: admin.id, requisitionPrefix: "TC", contactAddress: "Edo\nNigeria", contactEmail: "info@teasooconsulting.com", website: "www.teasooconsulting.com" } })
     .where(sql`${s.organisations.id} = ${O}`);
   const [cages, printers] = await db
     .insert(s.vendors)

@@ -527,20 +527,36 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
   const mp = await session("admin@teasoo.test");
   await mp.page.goto(reqUrl, { waitUntil: "networkidle" });
   ok(await mp.page.getByText("Ready to pay").isVisible(), "the Managing Partner is asked to pay it");
+  // Paid to the staff member, added to the allocation they already hold.
+  await mp.page.locator('input[name="payTo"][value="STAFF"]').check();
+  ok((await mp.page.locator("#staffId").inputValue()) !== "", "paying a staff member defaults to the requester");
+  const existing = await mp.page.locator("#allocationTarget option", { hasText: "Staff Training Logistics" }).getAttribute("value");
+  await mp.page.selectOption("#allocationTarget", existing);
   await mp.page.fill("#paymentReference", "TRF-PROJ-001");
   await mp.page.getByRole("button", { name: /Record payment of ₦305,000/ }).click();
   await mp.page.getByTestId("req-payment").waitFor({ timeout: 15000 });
   ok(await mp.page.getByText(/ref TRF-PROJ-001/).isVisible(), "payment recorded with its reference");
+  ok(await mp.page.getByTestId("req-payment").getByText(/as part of allocation AL-/).isVisible(), "money paid to the staff member is added to their allocation");
+
+  // The requisition as a branded PDF named after it, with the approval history.
+  const pdf = await mp.page.request.get(reqUrl.replace("/requisitions/", "/api/requisitions/") + "/pdf");
+  const pdfText = (await pdf.body()).toString("latin1");
+  ok(
+    pdf.status() === 200 && /filename="Purchase_Request_TC-PR-00120\.pdf"/.test(pdf.headers()["content-disposition"] ?? ""),
+    "requisition downloads as Purchase_Request_TC-PR-00120.pdf",
+  );
+  ok(pdfText.includes("Approval History") && pdfText.includes("info@teasooconsulting.com") && pdfText.includes("HD PROJECTOR"), "the PDF has the branding, items and approval history");
 
   // The seeded approved requisition is paid to the requester as an allocation.
   await mp.page.goto(BASE + "/requisitions?view=pending", { waitUntil: "networkidle" });
   await mp.page.locator("tr", { hasText: "Conference banners and flyers" }).getByRole("link").click();
   await mp.page.waitForURL(/\/requisitions\/[0-9a-f-]{36}$/, { timeout: 20000 });
   await mp.page.getByText(/Jane Doe/).first().waitFor();
-  await mp.page.locator('input[name="payTo"][value="REQUESTER"]').check();
+  await mp.page.locator('input[name="payTo"][value="STAFF"]').check();
+  await mp.page.selectOption("#allocationTarget", "NEW");
   await mp.page.getByRole("button", { name: /Record payment/ }).click();
-  await mp.page.getByText(/log expenses against it/).waitFor({ timeout: 15000 });
-  ok(true, "paying the requester creates an allocation for them");
+  await mp.page.getByText(/they record their expenses against it/).waitFor({ timeout: 15000 });
+  ok(true, "paying a staff member can start a new allocation for them");
 
   const exp = await mp.page.request.get(BASE + "/api/exports?report=requisitions&view=all&status=all&format=xlsx");
   ok(exp.status() === 200, "requisitions export to Excel");
@@ -548,6 +564,10 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
 
   await rp.goto(reqUrl, { waitUntil: "networkidle" });
   ok(await rp.getByText("Paid", { exact: true }).first().isVisible(), "staff sees their requisition was paid");
+  await rp.getByTestId("req-payment").getByRole("link").click();
+  await rp.waitForURL(/\/allocations\/[0-9a-f-]{36}/, { timeout: 20000 });
+  await rp.getByRole("link", { name: "From TC-PR-00120" }).first().waitFor({ timeout: 20000 }).catch(() => {});
+  ok(await rp.getByRole("link", { name: "From TC-PR-00120" }).first().isVisible(), "the allocation shows which requisition funded it, so staff log expenses there");
   await st.ctx.close();
 
   // The COO's own requisition goes to the Managing Partner.

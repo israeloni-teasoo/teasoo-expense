@@ -101,15 +101,30 @@ export async function processRequisitionAction(_: Prev, fd: FormData): Promise<A
   try {
     const actor = await requireActor();
     const id = str(fd, "id");
-    const payTo = str(fd, "payTo") === "REQUESTER" ? "REQUESTER" : "VENDOR";
-    const { allocationId } = await processRequisition(
+    const payTo = str(fd, "payTo") === "STAFF" ? "STAFF" : "VENDOR";
+    const r = await processRequisition(
       actor,
       id,
-      { paymentDate: str(fd, "paymentDate"), paymentMethod: opt(fd, "paymentMethod"), paymentReference: opt(fd, "paymentReference"), notes: opt(fd, "notes"), payTo },
+      {
+        paymentDate: str(fd, "paymentDate"),
+        paymentMethod: opt(fd, "paymentMethod"),
+        paymentReference: opt(fd, "paymentReference"),
+        notes: opt(fd, "notes"),
+        payTo,
+        staffId: opt(fd, "staffId"),
+        allocationTarget: opt(fd, "allocationTarget"),
+      },
       filesFrom(fd, "proof"),
     );
     revalidatePath("/", "layout");
-    return { ok: true, message: allocationId ? "Payment recorded and an allocation created for the requester." : "Payment recorded." };
+    return {
+      ok: true,
+      message: r.allocationId
+        ? r.toppedUp
+          ? `Payment recorded and added to allocation ${r.allocationRef}.`
+          : `Payment recorded and allocation ${r.allocationRef} created.`
+        : "Payment recorded.",
+    };
   } catch (e) {
     return toActionError(e);
   }
