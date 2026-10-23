@@ -995,9 +995,15 @@ export async function removeDocument(actor: CurrentUser, documentId: string) {
 /** Access check used by the document download route. */
 export async function canAccessDocument(
   actor: CurrentUser,
-  doc: { organisationId: string; expenseId: string | null; allocationId: string | null; claimId: string | null; feedbackId: string | null },
+  doc: { organisationId: string; expenseId: string | null; allocationId: string | null; claimId: string | null; feedbackId: string | null; requisitionId?: string | null },
 ) {
   if (doc.organisationId !== actor.organisationId) return false;
+  // Requisition quotes and proof of payment: anyone who can see the requisition (or its allocation).
+  if (doc.requisitionId) {
+    const { canAccessRequisitionDocument } = await import("./requisitions");
+    if (await canAccessRequisitionDocument(actor, doc.requisitionId)) return true;
+    if (!doc.allocationId) return can(actor.role, "documents.viewAll");
+  }
   // Feedback screenshots: only the sender and administrators handling feedback.
   if (doc.feedbackId) {
     if (can(actor.role, "feedback.manage")) return true;

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { ALLOCATION_STATUS, CLAIM_STATUS, EXPENSE_STATUS, type Tone } from "@/lib/format";
-import type { AllocationStatus, ClaimStatus, ExpenseStatus } from "@/db/schema";
+import { ALLOCATION_STATUS, CLAIM_STATUS, EXPENSE_STATUS, REQUISITION_STATUS, type Tone } from "@/lib/format";
+import type { AllocationStatus, ClaimStatus, ExpenseStatus, RequisitionStatus } from "@/db/schema";
 
 const tones: Record<Tone, string> = {
   gray: "bg-gray-100 text-gray-700 ring-gray-200",
@@ -40,5 +40,10 @@ export function AllocationStatusBadge({ status, overdue, overBudget }: { status:
 
 export function ClaimStatusBadge({ status }: { status: ClaimStatus }) {
   const s = CLAIM_STATUS[status];
+  return <Badge tone={s.tone}>{s.label}</Badge>;
+}
+
+export function RequisitionStatusBadge({ status }: { status: RequisitionStatus }) {
+  const s = REQUISITION_STATUS[status];
   return <Badge tone={s.tone}>{s.label}</Badge>;
 }

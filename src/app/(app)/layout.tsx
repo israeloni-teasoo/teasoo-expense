@@ -8,6 +8,7 @@ import { can, ROLE_LABELS } from "@/lib/rbac";
 import { unreadCount } from "@/lib/services/notifications";
 import { runSweep } from "@/lib/services/sweep";
 import { openFeedbackCount } from "@/lib/services/feedback";
+import { pendingRequisitionCount } from "@/lib/services/requisitions";
 import { logoutAction } from "@/app/actions/auth";
 import { keepPasswordAction } from "@/app/actions/account";
 import Link from "next/link";
@@ -19,7 +20,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const user = await requireUser();
   await runSweep(user.organisationId).catch((e) => console.error("sweep failed", e));
 
-  const [unread, reviewCount, claimCount, attentionCount, feedbackCount] = await Promise.all([
+  const [unread, reviewCount, claimCount, attentionCount, feedbackCount, requisitionCount] = await Promise.all([
     unreadCount(user.id),
     can(user.role, "expenses.review")
       ? db
@@ -49,7 +50,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       .where(and(eq(allocations.organisationId, user.organisationId), eq(expenses.staffId, user.id), inArray(expenses.status, ["REJECTED", "NEEDS_CLARIFICATION"])))
       .then((r) => Number(r[0].c)),
     can(user.role, "feedback.manage") ? openFeedbackCount(user.organisationId) : 0,
+    pendingRequisitionCount(user),
   ]);
+  const requisitionsNav: NavItem = { href: "/requisitions", label: "Requisitions", icon: "requisition", badge: requisitionCount };
 
   const sections: NavSection[] = [];
   let bottomNav: NavItem[];
@@ -62,6 +65,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         { href: "/expenses", label: "Expenses", icon: "receipt", badge: attentionCount },
         { href: "/expenses/new", label: "Add Expense", icon: "plus" },
         { href: "/claims", label: "Claims", icon: "claims" },
+        requisitionsNav,
         { href: "/notifications", label: "Notifications", icon: "bell", badge: unread },
         { href: "/feedback", label: "Feedback", icon: "feedback" },
         { href: "/profile", label: "Profile", icon: "user" },
@@ -82,6 +86,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     if (can(user.role, "staff.view")) finance.push({ href: "/staff", label: "Staff", icon: "users" });
     if (can(user.role, "allocations.reconcile")) finance.push({ href: "/reconciliation", label: "Reconciliation", icon: "scale" });
     if (can(user.role, "claims.review")) finance.push({ href: "/claims", label: "Claims", icon: "claims", badge: claimCount });
+    finance.push(requisitionsNav);
     if (can(user.role, "reports.view")) finance.push({ href: "/reports", label: "Reports", icon: "chart" });
     if (can(user.role, "documents.viewAll")) finance.push({ href: "/documents", label: "Documents", icon: "file" });
     sections.push({ items: finance });
@@ -106,6 +111,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         admin.push({ href: "/admin/settings", label: "Settings", icon: "settings" });
       }
       if (user.isGroupAdmin) admin.push({ href: "/admin/organisations", label: "Organisations", icon: "building" });
+      if (can(user.role, "vendors.manage")) admin.push({ href: "/admin/vendors", label: "Vendors", icon: "store" });
       if (can(user.role, "feedback.manage")) admin.push({ href: "/admin/feedback", label: "Feedback inbox", icon: "feedback", badge: feedbackCount });
       if (can(user.role, "audit.view")) admin.push({ href: "/admin/audit", label: "Audit log", icon: "audit" });
       sections.push({ title: "Administration", items: admin });

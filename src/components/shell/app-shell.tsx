@@ -9,6 +9,8 @@ import {
   Bell,
   BookOpen,
   Building2,
+  ClipboardList,
+  Store,
   ClipboardCheck,
   FileText,
   FolderKanban,
@@ -57,6 +59,8 @@ const ICONS = {
   claims: HandCoins,
   book: BookOpen,
   feedback: MessageSquarePlus,
+  requisition: ClipboardList,
+  store: Store,
 } as const;
 export type IconName = keyof typeof ICONS;
 
@@ -183,12 +187,12 @@ export function AppShell({
         <NavigationProgress />
       </Suspense>
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block print:!hidden">
         <SidebarContent sections={sections} user={user} pathname={pathname} logoutAction={logoutAction} org={org} />
       </aside>
 
       {/* Mobile drawer */}
-      <div className={cn("fixed inset-0 z-50 lg:hidden", drawer ? "" : "pointer-events-none")} aria-hidden={!drawer}>
+      <div className={cn("fixed inset-0 z-50 lg:hidden print:hidden", drawer ? "" : "pointer-events-none")} aria-hidden={!drawer}>
         <div className={cn("absolute inset-0 bg-gray-900/50 transition-opacity", drawer ? "opacity-100" : "opacity-0")} onClick={() => setDrawer(false)} />
         <div className={cn("absolute inset-y-0 left-0 w-[82%] max-w-xs shadow-xl transition-transform duration-200", drawer ? "translate-x-0" : "-translate-x-full")}>
           <button onClick={() => setDrawer(false)} className="absolute right-3 top-4 z-10 rounded-lg p-1.5 text-brand-200 hover:bg-brand-800" aria-label="Close menu">
@@ -198,9 +202,9 @@ export function AppShell({
         </div>
       </div>
 
-      <div className="lg:pl-64">
+      <div className="lg:pl-64 print:!pl-0">
         {/* Top bar */}
-        <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/90 backdrop-blur pt-[env(safe-area-inset-top)]">
+        <header className="sticky top-0 z-20 print:hidden border-b border-gray-200 bg-white/90 backdrop-blur pt-[env(safe-area-inset-top)]">
           <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:h-16 lg:px-8">
             <button onClick={() => setDrawer(true)} className="-ml-1 rounded-lg p-1.5 text-gray-600 hover:bg-gray-100 lg:hidden" aria-label="Open menu">
               <Menu className="h-6 w-6" />
@@ -237,7 +241,7 @@ export function AppShell({
       </div>
 
       {/* Mobile bottom navigation */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 backdrop-blur pb-[env(safe-area-inset-bottom)] lg:hidden" aria-label="Primary">
+      <nav className="fixed inset-x-0 bottom-0 z-40 print:hidden border-t border-gray-200 bg-white/95 backdrop-blur pb-[env(safe-area-inset-bottom)] lg:hidden" aria-label="Primary">
         <div className="mx-auto grid max-w-md grid-cols-5">
           {bottomNav.map((item) => {
             const Icon = ICONS[item.icon];

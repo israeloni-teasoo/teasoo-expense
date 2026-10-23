@@ -43,6 +43,16 @@ Responsive throughout: a sidebar layout on desktop, and on phones a bottom tab b
 - **Company staff** (`@teasooconsulting.com`) get an invitation email and use **Sign in with Google**. Emails listed in `BOOTSTRAP_ADMIN_EMAILS` are the one exception: they become group administrators on their first sign-in, which is how the first admin is created on a fresh database. Personal Gmail and other domains are refused for Google sign-in (the ID token's `hd` claim must match).
 - **Ad-hoc staff** without a company email get a readable generated (or typed) password in their invitation, or it's shown once to share if email isn't configured. After signing in they're asked whether to keep that password or choose their own. Accountants can invite Staff only and issue new login details for staff.
 
+### Requisitions (purchase requests)
+
+- Anyone can raise a requisition from **Requisitions → New requisition**: what it's for, the date it's needed by, delivery address, a reference, notes to the approver and line items (item, category incl. "Others", description, vendor, quantity, estimated price, discount). Quotes or invoices can be attached. Totals are calculated as quantity × price − discount.
+- **Approval chain**: submitted requisitions go to the **approver** (e.g. the COO), who can approve, decline with a reason, or ask for more information (it goes back to the requester to update and resubmit). Approved requisitions go to the **payer** (e.g. the Managing Partner), who records the payment: date, method, transfer reference and proof of payment. The payer can also decline.
+- Nobody approves their own requisition: the approver's own requisitions go to the payer for approval.
+- Choose the approver, the payer and optional backups for each organisation in **Settings → Requisitions**.
+- When paying, the payer can choose to send the money to the requester instead of the vendor; an allocation is then created so the requester accounts for it with receipts as usual.
+- **Vendors** (with account name, number and bank) are saved for reuse. Staff can add one while raising a requisition; finance edit or archive them under **Administration → Vendors**.
+- Requesters can recall a requisition that's awaiting approval to change it, or cancel it. Every step is in the approval history with comments, and everyone involved is notified (in the app and by email). The requisition page prints or saves as PDF, and the list exports to Excel, CSV or PDF.
+
 ### Organisations (subsidiaries)
 
 - Each organisation has its own people, allocations, expenses, categories, departments, projects, settings, reports and audit log.

@@ -27,12 +27,15 @@ export const PERMISSIONS = {
   "admin.config": "Configure categories, departments, projects and rules",
   "audit.view": "View audit logs",
   "feedback.manage": "Read, answer and resolve feedback from all users",
+  "requisitions.create": "Raise requisitions (purchase requests)",
+  "requisitions.viewAll": "View all requisitions",
+  "vendors.manage": "Edit and archive saved vendors",
 } as const;
 
 export type Permission = keyof typeof PERMISSIONS;
 
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
-  STAFF: ["funds.own"],
+  STAFF: ["funds.own", "requisitions.create"],
   ACCOUNTANT: [
     "funds.own",
     "expenses.viewAll",
@@ -49,6 +52,9 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "staff.view",
     "users.addAdhoc",
     "audit.view",
+    "requisitions.create",
+    "requisitions.viewAll",
+    "vendors.manage",
   ],
   ADMIN: Object.keys(PERMISSIONS) as Permission[],
   MANAGEMENT: [
@@ -58,6 +64,8 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "reports.export",
     "documents.viewAll",
     "staff.view",
+    "requisitions.create",
+    "requisitions.viewAll",
   ],
 };
 

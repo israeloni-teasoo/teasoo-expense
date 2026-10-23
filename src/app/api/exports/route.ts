@@ -9,8 +9,9 @@ import { parseExpenseFilters } from "@/lib/services/expenses";
 import { getOrg } from "@/lib/services/org";
 import { buildReportTables } from "@/lib/services/report-tables";
 import { REPORT_LABELS, type ReportKind } from "@/lib/services/reports";
+import { requisitionTable } from "@/lib/services/requisitions";
 
-const KINDS = ["expenses", "staff", "allocations", "categories", "projects", "departments", "allocation"] as const;
+const KINDS = ["expenses", "staff", "allocations", "categories", "projects", "departments", "allocation", "requisitions"] as const;
 const MIME = {
   csv: "text/csv; charset=utf-8",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -32,7 +33,8 @@ export async function GET(req: NextRequest) {
 
   // Staff may export their own expenses and allocations; organisation-wide reports need export permission.
   const ownOnly = !can(user.role, "reports.export");
-  if (ownOnly && !["expenses", "allocation"].includes(report)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Requisitions export whatever the person can see on the Requisitions page.
+  if (ownOnly && !["expenses", "allocation", "requisitions"].includes(report)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const range = resolvePeriod(sp.period, { from: sp.from, to: sp.to });
   const filters = parseExpenseFilters(sp);
@@ -40,18 +42,21 @@ export async function GET(req: NextRequest) {
   if (sp.ids) filters.ids = sp.ids.split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
 
   try {
-    const tables = await buildReportTables(user, report, range, { filters, allocationId: sp.allocationId });
+    const tables =
+      report === "requisitions"
+        ? [await requisitionTable(user, sp)]
+        : await buildReportTables(user, report, range, { filters, allocationId: sp.allocationId });
     const org = await getOrg(user.organisationId);
     const meta = { organisation: org.name, generatedBy: user.fullName };
     const body = format === "csv" ? toCSV(tables[tables.length - 1]) : format === "xlsx" ? await toXLSX(tables, meta) : toPDF(tables, meta);
-    const base = report === "allocation" ? "allocation" : REPORT_LABELS[report as ReportKind].toLowerCase().replace(/\s+/g, "-");
+    const base = report === "allocation" || report === "requisitions" ? report : REPORT_LABELS[report as ReportKind].toLowerCase().replace(/\s+/g, "-");
     const filename = `${base}-${todayISO()}.${format}`;
     await audit(db, {
       organisationId: user.organisationId,
       userId: user.id,
       entityType: "EXPORT",
       action: "EXPORTED",
-      summary: `${user.fullName} exported ${report === "allocation" ? "an allocation" : REPORT_LABELS[report as ReportKind].toLowerCase()} (${format.toUpperCase()}, ${tables.reduce((s, t) => s + t.rows.length, 0)} rows)`,
+      summary: `${user.fullName} exported ${report === "allocation" ? "an allocation" : report === "requisitions" ? "requisitions" : REPORT_LABELS[report as ReportKind].toLowerCase()} (${format.toUpperCase()}, ${tables.reduce((s, t) => s + t.rows.length, 0)} rows)`,
       newValues: { report, format, period: range.label, filters: sp },
     });
     return new NextResponse(new Uint8Array(body), {
