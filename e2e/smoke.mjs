@@ -444,6 +444,21 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
 
 // ---- Requisitions: staff → COO → Managing Partner ----
 {
+  // Numbering continues from Zoho: admin sets the next number.
+  const adm = await session("admin@teasoo.test");
+  await adm.page.goto(BASE + "/admin/settings", { waitUntil: "networkidle" });
+  ok((await adm.page.getByTestId("req-number-preview").textContent()) === "TC-PR-00101", "requisition numbering continues after the seeded TC-PR-00100");
+  await adm.page.fill("#nextNumber", "120");
+  ok((await adm.page.getByTestId("req-number-preview").textContent()) === "TC-PR-00120", "settings preview the next requisition number");
+  await adm.page.getByRole("button", { name: "Save requisition settings" }).click();
+  await adm.page.getByText("Requisition settings saved.").waitFor({ timeout: 15000 });
+  // Collapsible sidebar: setup lists fold away and open on click.
+  const aside = adm.page.locator("aside");
+  ok(!(await aside.getByRole("link", { name: "Categories" }).isVisible()), "admin sidebar keeps setup lists folded away");
+  await aside.getByRole("button", { name: /Lists & setup/ }).click();
+  ok(await aside.getByRole("link", { name: "Categories" }).isVisible(), "opening a sidebar group shows its pages");
+  await adm.ctx.close();
+
   const st = await session("staff@teasoo.test");
   let rp = st.page;
   await rp.goto(BASE + "/requisitions/new", { waitUntil: "networkidle" });
@@ -472,6 +487,7 @@ ok(adhoc === null, "generated password is required (demo password rejected)");
   await rp.getByRole("button", { name: "Submit for approval" }).click();
   await rp.waitForURL(/\/requisitions\/[0-9a-f-]{36}$/, { timeout: 20000 });
   const reqUrl = rp.url();
+  ok(await rp.getByRole("heading", { name: "TC-PR-00120" }).isVisible(), "new requisitions are numbered TC-PR-00120");
   ok(
     (await rp.getByText("Awaiting approval").first().isVisible()) && (await rp.getByTestId("req-history").getByText(/submitted it\s*to Femi Balogun/).isVisible()),
     "submitted requisition goes to the COO",

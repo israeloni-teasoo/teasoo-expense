@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { approversFor, executorsFor, formatQuantity, lineAmount, parseQuantity } from "./requisition-rules";
+import { approversFor, defaultRequisitionPrefix, executorsFor, formatQuantity, formatRequisitionReference, lineAmount, parseQuantity } from "./requisition-rules";
 
 const s = { requisitionApproverId: "coo", requisitionApproverBackupId: "coo2", requisitionExecutorId: "mp", requisitionExecutorBackupId: null };
 
@@ -33,5 +33,16 @@ describe("line maths", () => {
     expect(parseQuantity("abc")).toBeNull();
     expect(formatQuantity(150)).toBe("1.5");
     expect(formatQuantity(200)).toBe("2");
+  });
+});
+
+describe("requisition numbers", () => {
+  it("uses the Zoho format", () => {
+    expect(formatRequisitionReference("TC", 100)).toBe("TC-PR-00100");
+  });
+  it("derives the prefix from the organisation's initials", () => {
+    expect(defaultRequisitionPrefix("Teasoo Consulting")).toBe("TC");
+    expect(defaultRequisitionPrefix("Teasoo Logistics Ltd")).toBe("TL");
+    expect(defaultRequisitionPrefix("123")).toBe("TX");
   });
 });

@@ -145,9 +145,11 @@ export async function saveRequisitionApproversAction(_: Prev, fd: FormData): Pro
       approverBackupId: opt(fd, "approverBackupId"),
       executorId: opt(fd, "executorId"),
       executorBackupId: opt(fd, "executorBackupId"),
+      prefix: opt(fd, "prefix"),
+      nextNumber: opt(fd, "nextNumber") ? Number(str(fd, "nextNumber")) : null,
     });
     revalidatePath("/", "layout");
-    return { ok: true, message: "Requisition approvers saved." };
+    return { ok: true, message: "Requisition settings saved." };
   } catch (e) {
     return toActionError(e);
   }

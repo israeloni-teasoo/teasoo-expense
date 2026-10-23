@@ -52,3 +52,20 @@ export function lineAmount(quantityHundredths: number, rateKobo: number, discoun
 export function lineGross(quantityHundredths: number, rateKobo: number) {
   return Math.round((quantityHundredths * rateKobo) / 100);
 }
+
+/** Requisition prefix from the organisation name: "Teasoo Consulting" → "TC", "Teasoo Logistics Ltd" → "TL". */
+export function defaultRequisitionPrefix(orgName: string) {
+  const skip = new Set(["LTD", "LIMITED", "PLC", "INC", "CO", "LLC", "AND", "OF", "THE"]);
+  const letters = orgName
+    .toUpperCase()
+    .split(/[^A-Z]+/)
+    .filter((w) => w && !skip.has(w))
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 4);
+  return letters || "TX";
+}
+
+export function formatRequisitionReference(prefix: string, n: number) {
+  return `${prefix}-PR-${String(n).padStart(5, "0")}`;
+}

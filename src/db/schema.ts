@@ -142,6 +142,8 @@ export type OrgSettings = {
   /** Requisitions: who executes/pays approved requests (e.g. the Managing Partner) and an optional backup. */
   requisitionExecutorId?: string | null;
   requisitionExecutorBackupId?: string | null;
+  /** Requisition reference prefix, e.g. "TC" → TC-PR-00100. Defaults to the organisation's initials. */
+  requisitionPrefix?: string | null;
 };
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
