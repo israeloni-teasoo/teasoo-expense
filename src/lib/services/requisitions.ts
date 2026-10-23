@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core";
 import { db, type Executor } from "@/db";
 import {
+  allocationAdjustments,
   allocations,
   documents,
   expenseCategories,
@@ -276,9 +277,20 @@ export async function getRequisition(actor: CurrentUser, id: string) {
   };
   const actors = actorsFor(settings, r);
   const isRequester = r.requesterId === actor.id;
+  const paidAllocation = r.allocationId
+    ? (
+        await db
+          .select({ id: allocations.id, reference: allocations.reference, purpose: allocations.purpose, first: users.firstName, last: users.lastName })
+          .from(allocations)
+          .innerJoin(users, eq(users.id, allocations.staffId))
+          .where(eq(allocations.id, r.allocationId))
+          .limit(1)
+      ).map((a) => ({ id: a.id, reference: a.reference, purpose: a.purpose, staffName: `${a.first} ${a.last}` }))[0] ?? null
+    : null;
   return {
     requisition: r,
     requester: requester ? { id: requester.id, name: `${requester.firstName} ${requester.lastName}`, email: requester.email, jobTitle: requester.jobTitle } : null,
+    paidAllocation,
     items: items.map((x) => ({ ...x.item, categoryLabel: categoryLabel(x.categoryName, x.item.categoryOther), vendor: x.vendor })),
     events: events.map((x) => ({
       ...x.e,
@@ -520,11 +532,38 @@ export type PaymentInput = {
   paymentMethod?: string | null;
   paymentReference?: string | null;
   notes?: string | null;
-  /** VENDOR: paid straight to the supplier(s). REQUESTER: money given to the requester as an allocation to account for. */
-  payTo: "VENDOR" | "REQUESTER";
+  /** VENDOR: paid straight to the supplier(s). STAFF: paid to a staff member, who accounts for it with receipts. */
+  payTo: "VENDOR" | "STAFF";
+  /** STAFF: who received the money (defaults to the requester). */
+  staffId?: string | null;
+  /** STAFF: "NEW" starts a new allocation; an allocation id adds the money to that open allocation. */
+  allocationTarget?: string | null;
 };
 
-/** The executor (e.g. Managing Partner) records that an approved requisition has been paid. */
+/** Staff members and their open allocations, for the payment form. */
+export async function paymentTargets(actor: CurrentUser) {
+  const people = await db
+    .select({ id: users.id, first: users.firstName, last: users.lastName, role: memberships.role })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(and(eq(memberships.organisationId, actor.organisationId), eq(memberships.status, "ACTIVE"), eq(users.status, "ACTIVE")))
+    .orderBy(asc(users.firstName), asc(users.lastName));
+  const open = await db
+    .select({ id: allocations.id, reference: allocations.reference, purpose: allocations.purpose, staffId: allocations.staffId })
+    .from(allocations)
+    .where(and(eq(allocations.organisationId, actor.organisationId), eq(allocations.status, "ACTIVE"), eq(allocations.kind, "ADVANCE")))
+    .orderBy(desc(allocations.dateReceived));
+  return {
+    staff: people.filter((p) => p.role !== "MANAGEMENT").map((p) => ({ id: p.id, name: `${p.first} ${p.last}` })),
+    allocations: open,
+  };
+}
+
+/**
+ * The executor (e.g. Managing Partner) records that an approved requisition has been paid —
+ * either to the vendor(s), or to a staff member, in which case the money becomes (or is added to)
+ * an allocation the staff member records their expenses against.
+ */
 export async function processRequisition(actor: CurrentUser, id: string, input: PaymentInput, proof: File[]) {
   const e: Record<string, string> = {};
   if (!isISODate(input.paymentDate ?? "")) e.paymentDate = "Enter the payment date.";
@@ -534,6 +573,21 @@ export async function processRequisition(actor: CurrentUser, id: string, input: 
   const pre = await db.query.requisitions.findFirst({ where: and(eq(requisitions.id, id), eq(requisitions.organisationId, actor.organisationId)) });
   if (!pre) throw notFound("Requisition not found.");
   if (!actorsFor(settings, pre).includes(actor.id)) throw forbidden("This requisition isn't waiting for you.");
+
+  // Who received the money, when it went to a staff member.
+  let payee: { id: string; firstName: string; lastName: string; departmentId: string | null } | null = null;
+  if (input.payTo === "STAFF") {
+    const staffId = input.staffId || pre.requesterId;
+    const [m] = await db
+      .select({ user: users, role: memberships.role, departmentId: memberships.departmentId })
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .where(and(eq(memberships.userId, staffId), eq(memberships.organisationId, actor.organisationId), eq(memberships.status, "ACTIVE")))
+      .limit(1);
+    if (!m || m.user.status !== "ACTIVE") throw new DomainError("Choose an active staff member.", "VALIDATION", { staffId: "Choose a staff member." });
+    if (m.role === "MANAGEMENT") throw new DomainError("Management accounts are read-only and can't hold allocations.", "VALIDATION", { staffId: "Choose someone else." });
+    payee = { id: m.user.id, firstName: m.user.firstName, lastName: m.user.lastName, departmentId: m.departmentId };
+  }
   const stored = await storeFiles(actor.organisationId, proof);
 
   return db.transaction(async (tx) => {
@@ -541,40 +595,75 @@ export async function processRequisition(actor: CurrentUser, id: string, input: 
     if (r.status !== "APPROVED") throw new DomainError("Only approved requisitions can be paid.");
     const now = new Date();
     let allocationId: string | null = null;
-    if (input.payTo === "REQUESTER") {
-      const requester = await tx.query.users.findFirst({ where: eq(users.id, r.requesterId) });
-      const allocRef = await nextReference(tx, "AL", Number(input.paymentDate.slice(0, 4)));
-      const [alloc] = await tx
-        .insert(allocations)
-        .values({
-          organisationId: actor.organisationId,
-          reference: allocRef,
-          kind: "ADVANCE",
-          staffId: r.requesterId,
-          departmentId: r.departmentId,
-          projectId: r.projectId,
-          purpose: r.title,
-          initialAmount: r.total,
-          dateReceived: input.paymentDate,
-          expectedCompletionDate: r.expectedDate >= input.paymentDate ? r.expectedDate : null,
-          transferReference: input.paymentReference?.trim() || null,
-          fundingSource: `Requisition ${r.reference}`,
-          approvingOfficer: actor.fullName,
-          notes: input.notes?.trim() || null,
+    let allocationRef: string | null = null;
+    let toppedUp = false;
+    if (payee) {
+      const payeeName = `${payee.firstName} ${payee.lastName}`;
+      const target = input.allocationTarget && input.allocationTarget !== "NEW" ? input.allocationTarget : null;
+      if (target) {
+        // Add the money to one of the staff member's open allocations.
+        const [alloc] = await tx.select().from(allocations).where(eq(allocations.id, target)).for("update");
+        if (!alloc || alloc.organisationId !== actor.organisationId || alloc.staffId !== payee.id)
+          throw new DomainError(`Choose one of ${payeeName}'s allocations.`, "VALIDATION", { allocationTarget: "Not theirs." });
+        if (alloc.status !== "ACTIVE" || alloc.kind !== "ADVANCE")
+          throw new DomainError("That allocation is closed. Choose an open one or start a new allocation.", "VALIDATION", { allocationTarget: "Closed." });
+        const reason = `Requisition ${r.reference} — ${r.title}`;
+        await tx.insert(allocationAdjustments).values({
+          allocationId: alloc.id,
+          type: "ADDITIONAL_FUNDING",
+          amount: r.total,
+          reason,
+          reference: input.paymentReference?.trim() || null,
           createdBy: actor.id,
-        })
-        .returning();
-      allocationId = alloc.id;
-      await audit(tx, {
-        organisationId: actor.organisationId,
-        userId: actor.id,
-        entityType: "ALLOCATION",
-        entityId: alloc.id,
-        entityRef: allocRef,
-        allocationId: alloc.id,
-        action: "CREATED",
-        summary: `${actor.fullName} created allocation ${allocRef} of ${formatMoney(r.total)} for ${requester?.firstName} ${requester?.lastName} from requisition ${r.reference}`,
-      });
+        });
+        await audit(tx, {
+          organisationId: actor.organisationId,
+          userId: actor.id,
+          entityType: "ALLOCATION",
+          entityId: alloc.id,
+          entityRef: alloc.reference,
+          allocationId: alloc.id,
+          action: "ADJUSTMENT_ADDITIONAL_FUNDING",
+          summary: `${actor.fullName} added ${formatMoney(r.total, { sign: true })} additional funding — ${reason}`,
+          newValues: { type: "ADDITIONAL_FUNDING", amount: r.total, requisition: r.reference },
+        });
+        allocationId = alloc.id;
+        allocationRef = alloc.reference;
+        toppedUp = true;
+      } else {
+        allocationRef = await nextReference(tx, "AL", Number(input.paymentDate.slice(0, 4)));
+        const [alloc] = await tx
+          .insert(allocations)
+          .values({
+            organisationId: actor.organisationId,
+            reference: allocationRef,
+            kind: "ADVANCE",
+            staffId: payee.id,
+            departmentId: payee.id === r.requesterId ? (r.departmentId ?? payee.departmentId) : payee.departmentId,
+            projectId: r.projectId,
+            purpose: r.title,
+            initialAmount: r.total,
+            dateReceived: input.paymentDate,
+            expectedCompletionDate: r.expectedDate >= input.paymentDate ? r.expectedDate : null,
+            transferReference: input.paymentReference?.trim() || null,
+            fundingSource: `Requisition ${r.reference}`,
+            approvingOfficer: actor.fullName,
+            notes: input.notes?.trim() || null,
+            createdBy: actor.id,
+          })
+          .returning();
+        allocationId = alloc.id;
+        await audit(tx, {
+          organisationId: actor.organisationId,
+          userId: actor.id,
+          entityType: "ALLOCATION",
+          entityId: alloc.id,
+          entityRef: allocationRef,
+          allocationId: alloc.id,
+          action: "CREATED",
+          summary: `${actor.fullName} created allocation ${allocationRef} of ${formatMoney(r.total)} for ${payeeName} from requisition ${r.reference}`,
+        });
+      }
     }
     await tx
       .update(requisitions)
@@ -594,17 +683,29 @@ export async function processRequisition(actor: CurrentUser, id: string, input: 
     for (const f of stored) {
       await tx.insert(documents).values({ organisationId: actor.organisationId, kind: "PAYMENT_PROOF", requisitionId: id, allocationId, uploadedBy: actor.id, ...f });
     }
-    await event(tx, id, actor.id, "PROCESSED", input.notes);
-    await notifyUsers(tx, [r.requesterId], {
-      organisationId: actor.organisationId,
-      type: "REQUISITION_PAID",
-      title: `${r.reference} has been paid`,
-      body:
-        input.payTo === "REQUESTER"
-          ? `${formatMoney(r.total)} was sent to you for ${r.title}. Log your expenses and receipts against it.`
-          : `${formatMoney(r.total)} — ${r.title}. Paid on ${input.paymentDate}${input.paymentReference?.trim() ? ` (ref ${input.paymentReference.trim()})` : ""}.`,
-      link: allocationId ? `/allocations/${allocationId}` : `/requisitions/${id}`,
-    });
+    const paidNote = payee
+      ? `Paid to ${payee.firstName} ${payee.lastName} — ${toppedUp ? `added to allocation ${allocationRef}` : `new allocation ${allocationRef}`}.`
+      : null;
+    await event(tx, id, actor.id, "PROCESSED", [paidNote, input.notes?.trim()].filter(Boolean).join(" "));
+    const paidOn = `Paid on ${input.paymentDate}${input.paymentReference?.trim() ? ` (ref ${input.paymentReference.trim()})` : ""}.`;
+    if (payee) {
+      await notifyUsers(tx, [payee.id], {
+        organisationId: actor.organisationId,
+        type: "FUNDS_ASSIGNED",
+        title: `${formatMoney(r.total)} ${toppedUp ? `added to ${allocationRef}` : "sent to you"} for ${r.title}`,
+        body: `From requisition ${r.reference}. ${paidOn} Log your expenses and receipts against ${allocationRef}.`,
+        link: `/allocations/${allocationId}`,
+      });
+    }
+    if (payee?.id !== r.requesterId) {
+      await notifyUsers(tx, [r.requesterId], {
+        organisationId: actor.organisationId,
+        type: "REQUISITION_PAID",
+        title: `${r.reference} has been paid`,
+        body: `${formatMoney(r.total)} — ${r.title}. ${paidOn}${payee ? ` Paid to ${payee.firstName} ${payee.lastName}.` : ""}`,
+        link: `/requisitions/${id}`,
+      });
+    }
     await notifyRoles(
       tx,
       actor.organisationId,
@@ -620,10 +721,10 @@ export async function processRequisition(actor: CurrentUser, id: string, input: 
       entityRef: r.reference,
       allocationId,
       action: "PROCESSED",
-      summary: `${actor.fullName} paid ${r.reference} (${formatMoney(r.total)})${input.payTo === "REQUESTER" ? " to the requester as an allocation" : ""}${input.paymentReference?.trim() ? `, ref ${input.paymentReference.trim()}` : ""}`,
-      newValues: { paymentDate: input.paymentDate, paymentMethod: input.paymentMethod, paymentReference: input.paymentReference, payTo: input.payTo },
+      summary: `${actor.fullName} paid ${r.reference} (${formatMoney(r.total)})${paidNote ? ` — ${paidNote}` : ""}${input.paymentReference?.trim() ? ` Ref ${input.paymentReference.trim()}.` : ""}`,
+      newValues: { paymentDate: input.paymentDate, paymentMethod: input.paymentMethod, paymentReference: input.paymentReference, payTo: input.payTo, staffId: payee?.id ?? null, allocationId },
     });
-    return { allocationId };
+    return { allocationId, toppedUp, allocationRef };
   });
 }
 

@@ -49,9 +49,10 @@ Responsive throughout: a sidebar layout on desktop, and on phones a bottom tab b
 - **Approval chain**: submitted requisitions go to the **approver** (e.g. the COO), who can approve, decline with a reason, or ask for more information (it goes back to the requester to update and resubmit). Approved requisitions go to the **payer** (e.g. the Managing Partner), who records the payment: date, method, transfer reference and proof of payment. The payer can also decline.
 - Nobody approves their own requisition: the approver's own requisitions go to the payer for approval.
 - Choose the approver, the payer and optional backups for each organisation in **Settings → Requisitions**. Requisitions are numbered in the Zoho style, `TC-PR-00100`: set the prefix (defaults to the organisation's initials) and the next number there, e.g. to continue from your last Zoho number.
-- When paying, the payer can choose to send the money to the requester instead of the vendor; an allocation is then created so the requester accounts for it with receipts as usual.
+- When paying, the payer chooses whether the vendor or a staff member was paid. Money paid to a staff member (the requester by default) either starts a new allocation or is added to one of their open allocations as additional funding; the staff member then records expenses and receipts against it as usual, and the allocation links back to the requisition.
+- **Download PDF** on a requisition gives a branded purchase request named after it (e.g. `Purchase_Request_TC-PR-00101.pdf`): logo, organisation contact details (set in **Settings → Contact details**), submitted by/to, items with vendor bank details, payment details and the approval history.
 - **Vendors** (with account name, number and bank) are saved for reuse. Staff can add one while raising a requisition; finance edit or archive them under **Administration → Vendors**.
-- Requesters can recall a requisition that's awaiting approval to change it, or cancel it. Every step is in the approval history with comments, and everyone involved is notified (in the app and by email). The requisition page prints or saves as PDF, and the list exports to Excel, CSV or PDF.
+- Requesters can recall a requisition that's awaiting approval to change it, or cancel it. Every step is in the approval history with comments, and everyone involved is notified (in the app and by email). The list exports to Excel, CSV or PDF.
 
 ### Organisations (subsidiaries)
 
