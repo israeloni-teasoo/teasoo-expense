@@ -443,10 +443,15 @@ export function RequisitionCommentForm({ id }: { id: string }) {
 export function RequisitionApproversForm({
   members,
   values,
+  numbering,
 }: {
   members: { id: string; name: string; role: string }[];
   values: { approverId?: string | null; approverBackupId?: string | null; executorId?: string | null; executorBackupId?: string | null };
+  numbering: { prefix: string; nextNumber: number };
 }) {
+  const [prefix, setPrefix] = useState(numbering.prefix);
+  const [next, setNext] = useState(String(numbering.nextNumber));
+  const preview = `${(prefix || numbering.prefix).toUpperCase()}-PR-${String(Number(next) || numbering.nextNumber).padStart(5, "0")}`;
   const select = (name: keyof typeof values, label: string, hint: string, required?: boolean) => (
     <FormField name={name} label={label} hint={hint} required={required}>
       <Select id={name} name={name} defaultValue={values[name] ?? ""}>
@@ -465,8 +470,23 @@ export function RequisitionApproversForm({
         {select("executorId", "Pays approved requisitions (e.g. Managing Partner)", "Records the payment. Also approves the approver's own requisitions.", true)}
         {select("executorBackupId", "Backup payer", "Can also record payments.")}
       </div>
+      <fieldset className="rounded-lg border border-gray-200 p-3">
+        <legend className="px-1 text-sm font-medium text-gray-900">Numbering</legend>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <FormField name="prefix" label="Prefix" hint="e.g. TC for Teasoo Consulting">
+            <Input id="prefix" name="prefix" value={prefix} onChange={(e) => setPrefix(e.target.value.toUpperCase())} maxLength={6} autoComplete="off" />
+          </FormField>
+          <FormField name="nextNumber" label="Next number" hint="Continue from your last Zoho number">
+            <Input id="nextNumber" name="nextNumber" inputMode="numeric" value={next} onChange={(e) => setNext(e.target.value.replace(/\D/g, ""))} autoComplete="off" />
+          </FormField>
+          <div>
+            <p className="mb-1 text-sm font-medium text-gray-700">Next requisition</p>
+            <p className="flex h-10 items-center rounded-lg bg-gray-50 px-3 font-mono text-sm font-semibold text-gray-900" data-testid="req-number-preview">{preview}</p>
+          </div>
+        </div>
+      </fieldset>
       <div className="flex justify-end">
-        <SubmitButton pendingText="Saving…">Save approvers</SubmitButton>
+        <SubmitButton pendingText="Saving…">Save requisition settings</SubmitButton>
       </div>
     </ActionForm>
   );

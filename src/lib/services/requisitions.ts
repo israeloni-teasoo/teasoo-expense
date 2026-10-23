@@ -27,8 +27,8 @@ import { REQUISITION_STATUS } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { FINANCE_ROLES, notifyRoles, notifyUsers } from "@/lib/notify";
 import { can } from "@/lib/rbac";
-import { nextReference } from "@/lib/refs";
-import { approversFor, executorsFor, lineAmount, type ApprovalSettings } from "@/lib/requisition-rules";
+import { nextReference, nextRequisitionReference, peekRequisitionNumber, requisitionCounterKey } from "@/lib/refs";
+import { approversFor, defaultRequisitionPrefix, executorsFor, lineAmount, type ApprovalSettings } from "@/lib/requisition-rules";
 import { storeUpload, type StoredFile } from "@/lib/storage";
 import { getSettings } from "./org";
 
@@ -66,7 +66,17 @@ const EDITABLE: RequisitionStatus[] = ["DRAFT", "ON_HOLD"];
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-async function approvalSettings(orgId: string): Promise<ApprovalSettings> {
+export function requisitionPrefix(settings: { requisitionPrefix?: string | null }, orgName: string) {
+  return settings.requisitionPrefix || defaultRequisitionPrefix(orgName);
+}
+
+/** Current numbering for Settings: the prefix and the number the next requisition will get. */
+export async function requisitionNumbering(orgId: string, orgName: string) {
+  const prefix = requisitionPrefix(await getSettings(orgId), orgName);
+  return { prefix, nextNumber: await peekRequisitionNumber(db, prefix) };
+}
+
+async function approvalSettings(orgId: string): Promise<ApprovalSettings & { requisitionPrefix?: string | null }> {
   return getSettings(orgId);
 }
 
@@ -380,7 +390,7 @@ export async function saveRequisition(actor: CurrentUser, id: string | null, inp
       [row] = await tx.update(requisitions).set(values).where(eq(requisitions.id, id)).returning();
       await tx.delete(requisitionItems).where(eq(requisitionItems.requisitionId, id));
     } else {
-      const reference = await nextReference(tx, "PR", Number(todayISO().slice(0, 4)));
+      const reference = await nextRequisitionReference(tx, requisitionPrefix(settings, actor.organisation.name));
       [row] = await tx
         .insert(requisitions)
         .values({ ...values, organisationId: actor.organisationId, reference, requesterId: actor.id, departmentId: actor.departmentId ?? null })
@@ -653,9 +663,20 @@ export async function commentOnRequisition(actor: CurrentUser, id: string, comme
 
 export async function saveRequisitionApprovers(
   actor: CurrentUser,
-  input: { approverId?: string | null; approverBackupId?: string | null; executorId?: string | null; executorBackupId?: string | null },
+  input: {
+    approverId?: string | null;
+    approverBackupId?: string | null;
+    executorId?: string | null;
+    executorBackupId?: string | null;
+    prefix?: string | null;
+    nextNumber?: number | null;
+  },
 ) {
   if (!can(actor.role, "admin.config")) throw forbidden();
+  const prefix = input.prefix?.trim().toUpperCase() || null;
+  if (prefix && !/^[A-Z0-9]{1,6}$/.test(prefix)) throw new DomainError("Use up to 6 letters or digits for the prefix.", "VALIDATION", { prefix: "Letters and digits only." });
+  if (input.nextNumber != null && (!Number.isInteger(input.nextNumber) || input.nextNumber < 1 || input.nextNumber > 9_999_999))
+    throw new DomainError("Enter a whole number for the next requisition number.", "VALIDATION", { nextNumber: "Whole number." });
   const ids = [input.approverId, input.approverBackupId, input.executorId, input.executorBackupId].filter((x): x is string => !!x);
   const ok = await activeMembers(actor.organisationId, [...new Set(ids)]);
   if (ok.length !== new Set(ids).size) throw new DomainError("Choose active members of this organisation.", "VALIDATION");
@@ -669,9 +690,26 @@ export async function saveRequisitionApprovers(
     requisitionApproverBackupId: input.approverBackupId || null,
     requisitionExecutorId: input.executorId || null,
     requisitionExecutorBackupId: input.executorBackupId || null,
+    // Stored explicitly so renaming the organisation doesn't change its requisition numbers.
+    requisitionPrefix: prefix || org.settings.requisitionPrefix || defaultRequisitionPrefix(org.name),
   };
+  const effectivePrefix = requisitionPrefix(next, org.name);
   await db.transaction(async (tx) => {
     await tx.update(organisations).set({ settings: next }).where(eq(organisations.id, actor.organisationId));
+    if (input.nextNumber != null) {
+      // Numbers already used can't be handed out again (references are unique).
+      const upcoming = await peekRequisitionNumber(tx, effectivePrefix);
+      if (input.nextNumber < upcoming)
+        throw new DomainError(`${effectivePrefix}-PR numbers up to ${upcoming - 1} are already used. The next number must be ${upcoming} or higher.`, "VALIDATION", {
+          nextNumber: `At least ${upcoming}.`,
+        });
+      if (input.nextNumber > upcoming) {
+        await tx.execute(sql`
+          INSERT INTO counters (key, value) VALUES (${requisitionCounterKey(effectivePrefix)}, ${input.nextNumber - 1})
+          ON CONFLICT (key) DO UPDATE SET value = ${input.nextNumber - 1}
+        `);
+      }
+    }
     await audit(tx, {
       organisationId: actor.organisationId,
       userId: actor.id,

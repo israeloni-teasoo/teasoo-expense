@@ -9,6 +9,7 @@ import {
   Bell,
   BookOpen,
   Building2,
+  ChevronDown,
   ClipboardList,
   Store,
   ClipboardCheck,
@@ -65,7 +66,63 @@ const ICONS = {
 export type IconName = keyof typeof ICONS;
 
 export type NavItem = { href: string; label: string; icon: IconName; badge?: number };
-export type NavSection = { title?: string; items: NavItem[] };
+export type NavSection = {
+  title?: string;
+  items: NavItem[];
+  /** Folds away behind its title; opens automatically when it holds the current page. */
+  collapsible?: boolean;
+};
+
+const NAV_STATE_KEY = "tx_nav_sections";
+
+function readNavState(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(NAV_STATE_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function NavGroup({ section, pathname, onNavigate }: { section: NavSection; pathname: string; onNavigate?: () => void }) {
+  const holdsActive = section.items.some((i) => isActive(pathname, i.href));
+  const key = section.title ?? "";
+  // Starts from the current page only, then the remembered state loads (server and client markup match).
+  const [open, setOpen] = useState(holdsActive);
+  useEffect(() => setOpen(holdsActive || !!readNavState()[key]), [holdsActive, key]);
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try {
+      localStorage.setItem(NAV_STATE_KEY, JSON.stringify({ ...readNavState(), [key]: next }));
+    } catch {
+      // Private mode: the section just isn't remembered.
+    }
+  };
+  const badge = section.items.reduce((sum, i) => sum + (i.badge ?? 0), 0);
+  const id = `nav-${key.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        aria-controls={id}
+        className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-brand-300 hover:bg-brand-800/40 hover:text-brand-100"
+      >
+        <span className="flex-1 text-left">{section.title}</span>
+        {!open && badge > 0 && (
+          <span className="min-w-5 rounded-full bg-amber-400 px-1.5 text-center text-[11px] font-semibold normal-case leading-5 tracking-normal text-brand-950">{badge > 99 ? "99+" : badge}</span>
+        )}
+        <ChevronDown className={cn("h-4 w-4 transition-transform", !open && "-rotate-90")} />
+      </button>
+      <div id={id} hidden={!open} className="mt-0.5 space-y-0.5">
+        {section.items.map((item) => (
+          <NavLink key={item.href} item={item} pathname={pathname} onNavigate={onNavigate} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
@@ -116,17 +173,21 @@ function SidebarContent({
       <div className="flex h-16 shrink-0 items-center px-3 pr-10 lg:pr-3">
         <OrgSwitcher orgs={org.orgs} activeId={org.activeId} manageHref={org.manageHref} variant="sidebar" />
       </div>
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-2 scrollbar-none">
-        {sections.map((section, i) => (
-          <div key={i}>
-            {section.title && <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-300">{section.title}</p>}
-            <div className="space-y-0.5">
-              {section.items.map((item) => (
-                <NavLink key={item.href} item={item} pathname={pathname} onNavigate={onNavigate} />
-              ))}
+      <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-2 scrollbar-none">
+        {sections.map((section, i) =>
+          section.collapsible && section.title ? (
+            <NavGroup key={i} section={section} pathname={pathname} onNavigate={onNavigate} />
+          ) : (
+            <div key={i}>
+              {section.title && <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-300">{section.title}</p>}
+              <div className="space-y-0.5">
+                {section.items.map((item) => (
+                  <NavLink key={item.href} item={item} pathname={pathname} onNavigate={onNavigate} />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          ),
+        )}
       </nav>
       <div className="border-t border-brand-800 p-3">
         <Link href="/profile" onClick={onNavigate} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-brand-800/60">

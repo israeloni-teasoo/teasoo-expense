@@ -13,12 +13,14 @@ import { redirectUriFor } from "@/lib/auth/google";
 import { config, emailEnabled, emailFromWarning, googleEnabled } from "@/lib/config";
 import { storageDriverName } from "@/lib/storage";
 import { getLookups, getOrg } from "@/lib/services/org";
+import { requisitionNumbering } from "@/lib/services/requisitions";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
   const user = await requirePagePermission("admin.config");
   const [org, lookups] = await Promise.all([getOrg(user.organisationId), getLookups(user.organisationId)]);
+  const numbering = await requisitionNumbering(user.organisationId, org.name);
   const members = lookups.users.filter((u) => u.status === "ACTIVE").map((u) => ({ id: u.id, name: u.fullName, role: ROLE_LABELS[u.role] }));
   const h = await headers();
   const host = h.get("x-forwarded-host")?.split(",")[0].trim() || h.get("host") || "localhost:3000";
@@ -43,10 +45,11 @@ export default async function SettingsPage() {
         </CardBody>
       </Card>
       <Card id="requisitions" className="scroll-mt-24">
-        <CardHeader title="Requisitions" description="Who approves purchase requests, and who pays them once approved" />
+        <CardHeader title="Requisitions" description="Who approves purchase requests, who pays them once approved, and how they're numbered" />
         <CardBody>
           <RequisitionApproversForm
             members={members}
+            numbering={numbering}
             values={{
               approverId: org.settings.requisitionApproverId,
               approverBackupId: org.settings.requisitionApproverBackupId,

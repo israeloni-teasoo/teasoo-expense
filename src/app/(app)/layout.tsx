@@ -79,51 +79,51 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       { href: "/notifications", label: "Alerts", icon: "bell", badge: unread },
     ];
   } else {
-    const finance: NavItem[] = [{ href: "/dashboard", label: "Overview", icon: "home" }];
-    if (can(user.role, "expenses.review")) finance.push({ href: "/review", label: "Review queue", icon: "review", badge: reviewCount });
-    finance.push({ href: "/allocations", label: "Allocations", icon: "allocations" });
-    finance.push({ href: "/expenses", label: "Expenses", icon: "receipt" });
-    if (can(user.role, "staff.view")) finance.push({ href: "/staff", label: "Staff", icon: "users" });
-    if (can(user.role, "allocations.reconcile")) finance.push({ href: "/reconciliation", label: "Reconciliation", icon: "scale" });
-    if (can(user.role, "claims.review")) finance.push({ href: "/claims", label: "Claims", icon: "claims", badge: claimCount });
-    finance.push(requisitionsNav);
-    if (can(user.role, "reports.view")) finance.push({ href: "/reports", label: "Reports", icon: "chart" });
-    if (can(user.role, "documents.viewAll")) finance.push({ href: "/documents", label: "Documents", icon: "file" });
-    sections.push({ items: finance });
+    // Everyday work stays open; the rest is grouped into sections that fold away.
+    const main: NavItem[] = [{ href: "/dashboard", label: "Overview", icon: "home" }];
+    if (can(user.role, "expenses.review")) main.push({ href: "/review", label: "Review queue", icon: "review", badge: reviewCount });
+    main.push({ href: "/allocations", label: "Allocations", icon: "allocations" });
+    main.push({ href: "/expenses", label: "Expenses", icon: "receipt" });
+    main.push(requisitionsNav);
+    if (can(user.role, "claims.review")) main.push({ href: "/claims", label: "Claims", icon: "claims", badge: claimCount });
+    sections.push({ items: main });
+
+    const records: NavItem[] = [];
+    if (can(user.role, "allocations.reconcile")) records.push({ href: "/reconciliation", label: "Reconciliation", icon: "scale" });
+    if (can(user.role, "staff.view")) records.push({ href: "/staff", label: "Staff", icon: "users" });
+    if (can(user.role, "reports.view")) records.push({ href: "/reports", label: "Reports", icon: "chart" });
+    if (can(user.role, "documents.viewAll")) records.push({ href: "/documents", label: "Documents", icon: "file" });
+    if (records.length) sections.push({ title: "Reports & records", items: records, collapsible: true });
 
     if (can(user.role, "funds.own")) {
       sections.push({
         title: "My workspace",
+        collapsible: true,
         items: [
           { href: "/funds", label: "My Funds", icon: "wallet" },
           { href: "/expenses/new", label: "Add Expense", icon: "plus" },
         ],
       });
     }
-    if (can(user.role, "admin.users") || can(user.role, "users.addAdhoc") || can(user.role, "audit.view")) {
-      const admin: NavItem[] = [];
-      if (can(user.role, "admin.users") || can(user.role, "users.addAdhoc")) admin.push({ href: "/admin/users", label: "Users", icon: "users" });
-      if (can(user.role, "admin.users")) admin.push({ href: "/admin/roles", label: "Roles & permissions", icon: "shield" });
-      if (can(user.role, "admin.config")) {
-        admin.push({ href: "/admin/categories", label: "Categories", icon: "tags" });
-        admin.push({ href: "/admin/departments", label: "Departments", icon: "building" });
-        admin.push({ href: "/admin/projects", label: "Projects", icon: "folder" });
-        admin.push({ href: "/admin/settings", label: "Settings", icon: "settings" });
-      }
-      if (user.isGroupAdmin) admin.push({ href: "/admin/organisations", label: "Organisations", icon: "building" });
-      if (can(user.role, "vendors.manage")) admin.push({ href: "/admin/vendors", label: "Vendors", icon: "store" });
-      if (can(user.role, "feedback.manage")) admin.push({ href: "/admin/feedback", label: "Feedback inbox", icon: "feedback", badge: feedbackCount });
-      if (can(user.role, "audit.view")) admin.push({ href: "/admin/audit", label: "Audit log", icon: "audit" });
-      sections.push({ title: "Administration", items: admin });
+
+    const admin: NavItem[] = [];
+    if (can(user.role, "admin.users") || can(user.role, "users.addAdhoc")) admin.push({ href: "/admin/users", label: "Users", icon: "users" });
+    if (can(user.role, "admin.users")) admin.push({ href: "/admin/roles", label: "Roles & permissions", icon: "shield" });
+    if (user.isGroupAdmin) admin.push({ href: "/admin/organisations", label: "Organisations", icon: "building" });
+    if (can(user.role, "admin.config")) admin.push({ href: "/admin/settings", label: "Settings", icon: "settings" });
+    if (can(user.role, "feedback.manage")) admin.push({ href: "/admin/feedback", label: "Feedback inbox", icon: "feedback", badge: feedbackCount });
+    if (can(user.role, "audit.view")) admin.push({ href: "/admin/audit", label: "Audit log", icon: "audit" });
+    if (admin.length) sections.push({ title: "Administration", items: admin, collapsible: true });
+
+    const setup: NavItem[] = [];
+    if (can(user.role, "admin.config")) {
+      setup.push({ href: "/admin/categories", label: "Categories", icon: "tags" });
+      setup.push({ href: "/admin/departments", label: "Departments", icon: "building" });
+      setup.push({ href: "/admin/projects", label: "Projects", icon: "folder" });
     }
-    sections.push({
-      title: "Account",
-      items: [
-        { href: "/notifications", label: "Notifications", icon: "bell", badge: unread },
-        { href: "/feedback", label: "Feedback", icon: "feedback" },
-        { href: "/profile", label: "Profile", icon: "user" },
-      ],
-    });
+    if (can(user.role, "vendors.manage")) setup.push({ href: "/admin/vendors", label: "Vendors", icon: "store" });
+    if (setup.length) sections.push({ title: "Lists & setup", items: setup, collapsible: true });
+    // Notifications, feedback and profile are in the top bar and at the bottom of the sidebar.
     bottomNav =
       user.role === "MANAGEMENT"
         ? [

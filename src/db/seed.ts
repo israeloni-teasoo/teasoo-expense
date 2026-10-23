@@ -405,7 +405,7 @@ async function main() {
   const management = u("management@teasoo.test");
   await db
     .update(s.organisations)
-    .set({ settings: { ...s.DEFAULT_ORG_SETTINGS, requisitionApproverId: management.id, requisitionExecutorId: admin.id } })
+    .set({ settings: { ...s.DEFAULT_ORG_SETTINGS, requisitionApproverId: management.id, requisitionExecutorId: admin.id, requisitionPrefix: "TC" } })
     .where(sql`${s.organisations.id} = ${O}`);
   const [cages, printers] = await db
     .insert(s.vendors)
@@ -429,7 +429,7 @@ async function main() {
       .insert(s.requisitions)
       .values({
         organisationId: O,
-        reference: ref("PR", day(opts.received)),
+        reference: `TC-PR-${String(97 + reqCounter.n).padStart(5, "0")}`,
         requesterId: opts.staff.id,
         departmentId: opts.staff.departmentId,
         title: opts.title,
@@ -572,6 +572,7 @@ async function main() {
     }
   }
 
+  counters.set("PR:TC", 97 + reqCounter.n);
   // Make sure the counters table continues from the seeded references.
   for (const [key, value] of counters) {
     await db.insert(s.counters).values({ key, value }).onConflictDoUpdate({ target: s.counters.key, set: { value } });
