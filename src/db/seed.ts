@@ -407,11 +407,11 @@ async function main() {
     .update(s.organisations)
     .set({ settings: { ...s.DEFAULT_ORG_SETTINGS, requisitionApproverId: management.id, requisitionExecutorId: admin.id, requisitionPrefix: "TC", contactAddress: "Edo\nNigeria", contactEmail: "info@teasooconsulting.com", website: "www.teasooconsulting.com" } })
     .where(sql`${s.organisations.id} = ${O}`);
-  const [cages, printers] = await db
+  const [chairs, printers] = await db
     .insert(s.vendors)
     .values([
-      { organisationId: O, name: "Eguagie Wisdom Farms", accountName: "EGUAGIE UGIAGBE WISDOM", accountNumber: "0017025060", bankName: "Fidelity Bank", createdBy: accountant.id },
-      { organisationId: O, name: "Copy Express", accountName: "COPY EXPRESS LTD", accountNumber: "1012345678", bankName: "GTBank", phone: "08031234567", createdBy: accountant.id },
+      { organisationId: O, name: "Greenfield Supplies", accountName: "GREENFIELD SUPPLIES LTD", accountNumber: "1098765432", bankName: "Demo Bank", createdBy: accountant.id },
+      { organisationId: O, name: "Copy Express", accountName: "COPY EXPRESS LTD", accountNumber: "1012345678", bankName: "Demo Bank", phone: "08031234567", createdBy: accountant.id },
     ])
     .returning();
   const reqCounter = { n: 0 };
@@ -434,7 +434,7 @@ async function main() {
         departmentId: opts.staff.departmentId,
         title: opts.title,
         expectedDate: day(opts.received + 5),
-        deliveryAddress: "Head Office, Benin City, Edo",
+        deliveryAddress: "Head Office",
         total,
         status: opts.status,
         submittedAt,
@@ -473,10 +473,10 @@ async function main() {
   }
   await requisition({
     staff: israel,
-    title: "Bird cages for the T4L nursery",
+    title: "Office chairs for the meeting room",
     received: -1,
     status: "AWAITING_APPROVAL",
-    items: [{ name: "Bird cage", cat: "Equipment", desc: "96-capacity automatic bird cage", vendor: cages, qty: 1, rate: N(150_000) }],
+    items: [{ name: "Ergonomic office chair", cat: "Equipment", desc: "Mesh back, adjustable arms", vendor: chairs, qty: 1, rate: N(150_000) }],
   });
   await requisition({
     staff: u("jane@teasoo.test"),
