@@ -17,7 +17,8 @@
     "test:smoke": "node e2e/smoke.mjs",
     "vercel-build": "npm run check-env && npm run db:migrate && next build",
     "storage:setup": "tsx src/db/storage-setup.ts",
-    "check-env": "node scripts/check-env.mjs"
+    "check-env": "node scripts/check-env.mjs",
+    "db:copy": "bash scripts/copy-database.sh"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -101,20 +101,39 @@ Demo accounts (password `Password123`):
 
 `npm run db:reset` drops everything, re-runs migrations and re-seeds (refuses to run when `NODE_ENV=production`).
 
-### Deploying to Vercel + Supabase
+### Deploying to Vercel (Neon + Supabase Storage)
 
-1. **Supabase** — create a project. From **Connect**, copy the *Transaction pooler* string (port 6543) for `DATABASE_URL` and the *Session pooler* string (port 5432) for `DIRECT_URL`. From **Project Settings → API**, copy the project URL (`SUPABASE_URL`) and the `service_role` key (`SUPABASE_SERVICE_ROLE_KEY`, secret).
-2. **Receipts bucket** — with those values in a local `.env`, run `npm run storage:setup` once to create the private `receipts` bucket (or create it in the dashboard with *Public* turned off).
+The database is **Neon** Postgres; receipt files stay in **Supabase Storage** (Neon has no file storage).
+
+1. **Neon** — create a project (region close to your Vercel functions, e.g. Frankfurt for `fra1`). From **Connect**, copy the *Pooled connection* string (host contains `-pooler`) for `DATABASE_URL`, and the same string with *Connection pooling* switched off for `DIRECT_URL` (used for migrations). If you connect Neon through the **Vercel Marketplace integration** instead, it sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`, and both are picked up automatically.
+2. **Supabase Storage** — from **Project Settings → API**, copy the project URL (`SUPABASE_URL`) and the `service_role` key (`SUPABASE_SERVICE_ROLE_KEY`, secret). With those in a local `.env`, run `npm run storage:setup` once to create the private `receipts` bucket (or create it in the dashboard with *Public* turned off).
 3. **Google** — in Google Cloud Console create an OAuth client ID (*Web application*). Authorised redirect URI: `https://<your-domain>/api/auth/google/callback` (add `http://localhost:3000/api/auth/google/callback` for development). Set the consent screen to *Internal* so only Workspace accounts can use it.
 4. **Resend** — add and verify the sending domain under **Domains** (DNS records), then create an API key. The default sender is `notifications@expense.teasooconsulting.com`; set `EMAIL_FROM` if you verify a different domain.
 5. **Vercel** — import the repository and set the environment variables from `.env.example`, including `BOOTSTRAP_ADMIN_EMAILS=<your email>`. Tick **Production and Preview** for every variable — branch deployments are *Preview* builds and don't see Production-only variables. The `vercel-build` script checks the environment (`npm run check-env` prints exactly what's missing), runs database migrations, then `next build`.
 
-   If you connected Supabase through the **Vercel Marketplace integration**, its variables are picked up automatically: `POSTGRES_URL` is used as the app connection, `POSTGRES_URL_NON_POOLING` for migrations, and `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` switch receipt storage to Supabase. You then only need to add `AUTH_SECRET`, the Google and Resend keys and `BOOTSTRAP_ADMIN_EMAILS`. `APP_URL` defaults to the project's production domain.
+   `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` switch receipt storage to Supabase. The older `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` names (Supabase or Vercel Postgres integrations) still work as fallbacks. `APP_URL` defaults to the project's production domain.
 6. Sign in with Google using the bootstrap admin email. The first organisation, its default departments and categories are created automatically on that first sign-in. Then add subsidiaries under **Organisations** and invite people under **Users**. Don't run `db:seed` against production — it's demo data.
 
 Session cookies are `Secure` in production, so serve over HTTPS (Vercel does). The demo-account hint on the login page is hidden in production unless `SHOW_DEMO_ACCOUNTS=1`.
 
 Without `RESEND_API_KEY`, emails are written to the server log instead of being sent, and new ad-hoc staff passwords are shown on screen to share.
+
+### Moving the database from Supabase to Neon
+
+1. Create the Neon project (step 1 above) and leave its database empty.
+2. On a computer with the PostgreSQL 17 client tools (`pg_dump`, `pg_restore`, `psql`), run:
+
+   ```bash
+   SOURCE_DATABASE_URL='<Supabase session pooler or direct string, port 5432>' \
+   TARGET_DATABASE_URL='<Neon direct string, pooling off>' \
+   npm run db:copy
+   ```
+
+   It copies the app's tables (and the record of applied migrations) without touching the source, refuses a target that already has tables, and finishes by comparing row counts for every table.
+3. In Vercel, replace `DATABASE_URL` / `DIRECT_URL` (and remove the Supabase `POSTGRES_*` variables if the integration added them) with the Neon strings, keep the `SUPABASE_*` storage variables, and redeploy. Pause writes while you switch (copy, then change the variables straight away) so nothing is recorded in Supabase after the copy.
+4. Keep the Supabase database until you've checked the app on Neon; receipts keep working because they're still in Supabase Storage.
+
+Neon's console also has an **Import data** option that copies from a Postgres connection string, if you'd rather not run the script.
 
 **Troubleshooting:** **Admin → Settings → Integrations** shows which services are switched on, the Google redirect URI for the current domain, and has **Test storage** / **Send test email** buttons that report the exact error from Supabase or Resend. Unexpected errors show a short reference (e.g. `ref K3F9QZ`); search the Vercel function logs for `ref=K3F9QZ` to find the details. Supabase's newer `sb_secret_…` keys and the classic `service_role` JWT both work; the receipts bucket is created automatically on the first upload if it doesn't exist.
 
@@ -127,6 +146,7 @@ npm run lint
 npm run test:smoke    # end-to-end workflow against a running app with fresh seed data (needs Playwright)
 npm run storage:setup # create the private Supabase receipts bucket (once)
 npm run check-env     # list missing / optional environment settings
+npm run db:copy       # copy the database to a new, empty Postgres (e.g. Supabase → Neon)
 ```
 
 The smoke test drives the real UI: staff logs an expense with a receipt on a phone-sized screen, sees the duplicate warning, uploads a forged PDF (rejected), accountant approves, records a return, reconciles to ₦0, downloads Excel/CSV/PDF exports, an over-spend claim goes through recommend → approve, an accountant invites an ad-hoc staff member who signs in with the issued password and chooses to keep it, staff record an "Others" expense with a typed category, and an admin switches to the subsidiary, invites an existing user into it and creates a new organisation with a logo.

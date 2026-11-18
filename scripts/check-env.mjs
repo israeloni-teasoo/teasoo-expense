@@ -14,7 +14,7 @@ const onVercel = Boolean(env.VERCEL);
 const where = onVercel ? ` (Vercel → Project → Settings → Environment Variables, enabled for "${env.VERCEL_ENV ?? "this"}" deployments)` : "";
 
 if (!(env.DATABASE_URL || env.POSTGRES_URL || env.POSTGRES_PRISMA_URL))
-  errors.push("DATABASE_URL — Supabase → Connect → Transaction pooler connection string (or connect Supabase via the Vercel integration, which sets POSTGRES_URL)");
+  errors.push("DATABASE_URL — Neon → Connect → Pooled connection string (or connect Neon via the Vercel integration, which sets DATABASE_URL)");
 if (!env.AUTH_SECRET || env.AUTH_SECRET.length < 32) errors.push("AUTH_SECRET — a random string of at least 32 characters (e.g. `openssl rand -base64 48`)");
 
 const storage = env.STORAGE_DRIVER || (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY ? "supabase" : "local");
@@ -31,7 +31,7 @@ if (!env.APP_URL && !env.VERCEL_PROJECT_PRODUCTION_URL) warnings.push("APP_URL n
 
 for (const w of warnings) console.warn(`⚠  ${w}`);
 if (errors.length) {
-  console.error(`\n✗ Missing required configuration${where}:\n${errors.map((e) => `  • ${e}`).join("\n")}\n\nSee .env.example and the README "Deploying to Vercel + Supabase" section.\n`);
+  console.error(`\n✗ Missing required configuration${where}:\n${errors.map((e) => `  • ${e}`).join("\n")}\n\nSee .env.example and the README "Deploying to Vercel" section.\n`);
   process.exit(1);
 }
 console.log("✓ Environment looks good");

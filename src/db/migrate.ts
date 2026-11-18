@@ -5,7 +5,7 @@ import { Pool } from "pg";
 import { directDatabaseUrl, poolConfig } from "./pool-config";
 
 async function main() {
-  // Migrations need a session-mode connection; prefer DIRECT_URL (Supabase session pooler / direct) when set.
+  // Migrations need a session-mode connection; prefer DIRECT_URL / DATABASE_URL_UNPOOLED (Neon direct) when set.
   const pool = new Pool(poolConfig(directDatabaseUrl(), 1));
   await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
   await pool.end();
