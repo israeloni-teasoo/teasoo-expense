@@ -8,7 +8,7 @@ declare global {
 }
 
 function createPool() {
-  // Serverless functions each hold their own pool, so keep it small and use Supabase's pooler URL.
+  // Serverless functions each hold their own pool, so keep it small and use Neon's pooled URL.
   return new Pool(poolConfig(appDatabaseUrl(), process.env.VERCEL ? 3 : 10));
 }
 
