@@ -133,7 +133,9 @@ Without `RESEND_API_KEY`, emails are written to the server log instead of being 
 3. In Vercel, replace `DATABASE_URL` / `DIRECT_URL` (and remove the Supabase `POSTGRES_*` variables if the integration added them) with the Neon strings, keep the `SUPABASE_*` storage variables, and redeploy. Pause writes while you switch (copy, then change the variables straight away) so nothing is recorded in Supabase after the copy.
 4. Keep the Supabase database until you've checked the app on Neon; receipts keep working because they're still in Supabase Storage.
 
-Neon's console also has an **Import data** option that copies from a Postgres connection string, if you'd rather not run the script.
+No PostgreSQL tools on your computer? Run the same copy on GitHub: add `SOURCE_DATABASE_URL` and `TARGET_DATABASE_URL` as repository secrets (**Settings → Secrets and variables → Actions**), then **Actions → Copy database → Run workflow** and type `COPY`. Delete the two secrets afterwards.
+
+Neon's console also has an **Import data** option that copies from a Postgres connection string, if you'd rather not run the script. It copies the whole database, including Supabase's own `auth`/`storage` schemas, extensions and roles, which Neon doesn't have, so it can fail on a Supabase source; the script copies only the app's tables.
 
 **Troubleshooting:** **Admin → Settings → Integrations** shows which services are switched on, the Google redirect URI for the current domain, and has **Test storage** / **Send test email** buttons that report the exact error from Supabase or Resend. Unexpected errors show a short reference (e.g. `ref K3F9QZ`); search the Vercel function logs for `ref=K3F9QZ` to find the details. Supabase's newer `sb_secret_…` keys and the classic `service_role` JWT both work; the receipts bucket is created automatically on the first upload if it doesn't exist.
 
