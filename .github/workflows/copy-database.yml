@@ -1,0 +1,37 @@
+# One-off: copy the database to a new, empty Postgres (Supabase → Neon) without installing anything locally.
+# 1. Repository → Settings → Secrets and variables → Actions → New repository secret:
+#      SOURCE_DATABASE_URL  Supabase "Session pooler" string (port 5432)
+#      TARGET_DATABASE_URL  Neon string with connection pooling OFF (no "-pooler" in the host)
+# 2. Actions → "Copy database" → Run workflow → type COPY → Run.
+# Secrets are masked in the log. Delete both secrets once the copy is done.
+name: Copy database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type COPY to copy SOURCE_DATABASE_URL into the empty TARGET_DATABASE_URL
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  copy:
+    if: inputs.confirm == 'COPY'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL 17 client tools
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - name: Copy
+        env:
+          SOURCE_DATABASE_URL: ${{ secrets.SOURCE_DATABASE_URL }}
+          TARGET_DATABASE_URL: ${{ secrets.TARGET_DATABASE_URL }}
+        run: pg_dump --version && bash scripts/copy-database.sh
